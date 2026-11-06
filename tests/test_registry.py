@@ -12,9 +12,12 @@ def test_discovers_checks_in_package() -> None:
 
 def test_select_defaults_include_and_exclude() -> None:
     registry = PluginRegistry()
+    # Safe mode (the default) runs enabled-by-default checks that are not aggressive.
     assert [c.name for c in registry.select()] == [
-        n for n, c in registry.checks.items() if c.enabled_by_default
+        n for n, c in registry.checks.items() if c.enabled_by_default and not c.requires_aggressive
     ]
+    # Aggressive mode adds the aggressive checks.
+    assert set(c.name for c in registry.select(safe_mode=False)) >= {"sqli", "xss_reflected"}
     assert [c.name for c in registry.select(["security_headers"])] == ["security_headers"]
     assert registry.select(["security_headers"], ["security_headers"]) == []
 

@@ -82,6 +82,31 @@ The target and `--confirm-authorized` are deliberately not accepted from a file.
 | `cors` | Arbitrary origin reflection, `null` origin, prefix/suffix allowlist bypasses, `*` with credentials | Exact match of the probe origin in `Access-Control-Allow-Origin` |
 | `cookies` | Session cookies missing `Secure`, `HttpOnly`, `SameSite` (or `SameSite=None`) | Only session-like cookies (`data/session_cookies.txt`); CSRF tokens and deletions skipped |
 
+### Aggressive checks (require `--aggressive`)
+
+These send crafted values into query and form parameters, so they run only under `--aggressive`.
+They stay in scope, obey the rate limit, and use non-destructive probes (no data extraction, no
+time delays). Findings are `probable` — confirm manually.
+
+| Check | What it looks for | Technique |
+|---|---|---|
+| `xss_reflected` | Reflected cross-site scripting | A unique marker is injected; flagged if its angle brackets are reflected unencoded into HTML. Uses a non-executing tag, not a live script |
+| `sqli` | SQL injection | Error-based (a quote triggers a DB error absent from the baseline) and a strict boolean-differential fallback |
+
+### CVE correlation (`--cve`)
+
+With `--cve`, detected product versions are looked up against the NVD CVE database and matching
+CVEs are reported, severity set from the highest CVSS. This contacts **NVD, not the target**,
+over a separate client; only the product/version/CPE is sent, results are cached (`--cve-cache`),
+and any network failure degrades to no data. Set `--nvd-api-key` (or `NVD_API_KEY`) for a higher
+rate limit.
+
+```bash
+# Full engagement: crawl deeper, enable injection checks and CVE lookup.
+wraith scan https://target.example --confirm-authorized \
+  --aggressive --crawl-depth 2 --cve --format html --output report.html
+```
+
 Adding a check: drop a `BaseCheck` subclass into `wraith/checks/`. It is discovered
 automatically; nothing else needs wiring.
 
@@ -110,4 +135,6 @@ URL, a description, remediation, and evidence (the exact request and the respons
 
 - Raw TLS probes connect directly to the target, not through `--proxy` (a warning is shown).
 - Weak-protocol/cipher detection depends on what the local OpenSSL build can still offer.
-- v1 does no injection testing, authenticated scanning, or deep crawling (see roadmap: v2+).
+- Injection checks (`xss_reflected`, `sqli`) cover reflected XSS and error/boolean SQLi only;
+  stored/DOM XSS, blind/time-based SQLi, and other injection classes are not yet implemented.
+- No authenticated scanning yet (no login/session handling).

@@ -1,0 +1,35 @@
+# Database error signatures for the sqli check (case-insensitive regex, one per line).
+# A finding is raised only when such an error appears after a quote-breaking probe but NOT in
+# the baseline response - the differential is what keeps the false-positive rate down.
+# Format: dbms | regex
+
+MySQL | SQL syntax.{0,40}MySQL
+MySQL | you have an error in your SQL syntax
+MySQL | valid MySQL result
+MySQL | check the manual that corresponds to your (?:MySQL|MariaDB) server version
+MySQL | MySqlException
+MySQL | com\.mysql\.jdbc
+MariaDB | MariaDB server version for the right syntax
+PostgreSQL | PostgreSQL.{0,30}ERROR
+PostgreSQL | pg_query\(\)
+PostgreSQL | PSQLException
+PostgreSQL | unterminated quoted string at or near
+PostgreSQL | org\.postgresql\.util\.PSQLException
+Microsoft SQL Server | Unclosed quotation mark after the character string
+Microsoft SQL Server | Microsoft SQL (?:Server|Native Client)
+Microsoft SQL Server | System\.Data\.SqlClient\.SqlException
+Microsoft SQL Server | Incorrect syntax near
+Microsoft SQL Server | \[SQL Server\]
+Oracle | ORA-\d{5}
+Oracle | Oracle error
+Oracle | quoted string not properly terminated
+Oracle | java\.sql\.SQLException
+SQLite | SQLite(?:3)?::
+SQLite | SQLite/JDBCDriver
+SQLite | sqlite3\.OperationalError
+SQLite | unrecognized token:
+SQLite | near \".{0,30}\": syntax error
+Generic JDBC | java\.sql\.SQLSyntaxErrorException
+Generic ODBC | \[Microsoft\]\[ODBC
+Generic ODBC | ODBC SQL Server Driver
+Generic | SQLSTATE\[\w+\]

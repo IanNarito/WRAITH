@@ -121,3 +121,17 @@ def test_json_to_stdout_is_pure_json(httpserver: HTTPServer) -> None:
     assert result.exit_code == 0
     data = json.loads(result.stdout)
     assert data["schema_version"] == "1.0"
+
+
+def test_aggressive_checks_refuse_safe_mode(httpserver: HTTPServer) -> None:
+    serve_bare_page(httpserver)
+    result = runner.invoke(app, scan_args(httpserver, "--confirm-authorized", "--checks", "sqli"))
+    assert result.exit_code == 2
+    assert "needs --aggressive" in result.output
+
+
+def test_list_checks_marks_aggressive() -> None:
+    result = runner.invoke(app, ["list-checks"])
+    assert result.exit_code == 0
+    assert "sqli" in result.output and "xss_reflected" in result.output
+    assert "aggressive" in result.output
