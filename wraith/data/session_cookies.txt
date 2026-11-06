@@ -1,0 +1,14 @@
+# Cookie-name patterns (case-insensitive regex, searched anywhere in the name) that identify
+# session/authentication cookies for the cookies check. Lines starting with "!" exclude names:
+# CSRF tokens are often deliberately readable by JavaScript (double-submit pattern).
+sess
+^sid$
+auth
+token
+jwt
+login
+remember
+^connect\.sid$
+jsessionid
+!csrf
+!xsrf

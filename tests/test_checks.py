@@ -1,11 +1,10 @@
 import pytest
 from pytest_httpserver import HTTPServer
 
-from tests.conftest import ConfigFactory
+from tests.conftest import ConfigFactory, make_page
 from wraith.checks.security_headers import csp_weaknesses, evaluate
 from wraith.context import Page
 from wraith.engine import Engine
-from wraith.http_client import Exchange
 from wraith.models import Confidence, Severity
 
 GOOD_HEADERS = {
@@ -15,30 +14,6 @@ GOOD_HEADERS = {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=()",
 }
-
-
-def make_page(
-    headers: dict[str, str],
-    *,
-    url: str = "https://app.test/",
-    body: str = "<html><body>hi</body></html>",
-    content_type: str = "text/html; charset=utf-8",
-    status: int = 200,
-) -> Page:
-    all_headers = (("Content-Type", content_type), *headers.items())
-    exchange = Exchange(
-        id=1,
-        method="GET",
-        url=url,
-        http_version="HTTP/1.1",
-        request_headers=(("Host", "app.test"),),
-        status=status,
-        reason="OK",
-        response_headers=all_headers,
-        body_preview=body,
-        elapsed_ms=1.0,
-    )
-    return Page(url=url, status=status, headers=all_headers, body=body, exchange=exchange)
 
 
 def titles(page: Page) -> set[str]:

@@ -15,7 +15,8 @@ import itertools
 import logging
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from types import TracebackType
 from typing import Any, Self
@@ -145,7 +146,11 @@ class HTTPClient:
         self.retry_backoff = retry_backoff
         self.max_redirects = max_redirects
         self.max_body_bytes = max_body_bytes
+        self.timeout = config.timeout
+        self.proxy = config.proxy
         self.history: list[Exchange] = []
+        self.raw_probes = 0  # non-HTTP probes (e.g. TLS handshakes) made through raw_slot()
+        self._warned_raw_proxy = False
         self._ids = itertools.count(1)
         self._bucket = TokenBucket(config.rate)
         self._semaphore = asyncio.Semaphore(config.concurrency)
@@ -183,7 +188,25 @@ class HTTPClient:
 
     @property
     def requests_sent(self) -> int:
-        return len(self.history)
+        return len(self.history) + self.raw_probes
+
+    @asynccontextmanager
+    async def raw_slot(self, host: str, port: int, scheme: str = "https") -> AsyncIterator[None]:
+        """Gate a non-HTTP connection (e.g. a raw TLS handshake) through scope + rate limits.
+
+        The caller opens the connection inside the ``async with`` block.
+        """
+        url = httpx.URL(scheme=scheme, host=host, port=port, path="/")
+        if not self.scope.check(url):
+            raise OutOfScopeError(f"blocked out-of-scope connection to {host}:{port}")
+        if self.proxy and not self._warned_raw_proxy:
+            self._warned_raw_proxy = True
+            logger.warning("raw TLS probes connect directly to the target, not via the proxy")
+        await self._bucket.acquire()
+        async with self._semaphore:
+            self.raw_probes += 1
+            logger.debug("raw %s connection to %s:%d", scheme, host, port)
+            yield
 
     async def get(self, url: str | httpx.URL, **kwargs: Any) -> Response:
         return await self.request("GET", url, **kwargs)
@@ -201,6 +224,7 @@ class HTTPClient:
         *,
         headers: Mapping[str, str] | None = None,
         follow_redirects: bool = True,
+        max_bytes: int | None = None,
     ) -> Response:
         method = method.upper()
         if self.safe_mode and method not in SAFE_METHODS:
@@ -214,7 +238,7 @@ class HTTPClient:
 
         hops: list[Exchange] = []
         for _ in range(self.max_redirects + 1):
-            response = await self._send(method, current, headers)
+            response = await self._send(method, current, headers, max_bytes)
             location = response.headers.get("location")
             if (
                 not follow_redirects
@@ -238,14 +262,18 @@ class HTTPClient:
         raise HTTPClientError(f"more than {self.max_redirects} redirects starting at {url}")
 
     async def _send(
-        self, method: str, url: httpx.URL, headers: Mapping[str, str] | None
+        self,
+        method: str,
+        url: httpx.URL,
+        headers: Mapping[str, str] | None,
+        max_bytes: int | None,
     ) -> Response:
         attempt = 0
         while True:
             await self._bucket.acquire()
             try:
                 async with self._semaphore:
-                    return await self._send_once(method, url, headers)
+                    return await self._send_once(method, url, headers, max_bytes)
             except httpx.TransportError as exc:
                 if attempt >= self.max_retries:
                     raise HTTPClientError(
@@ -256,13 +284,17 @@ class HTTPClient:
                 await asyncio.sleep(self.retry_backoff * 2 ** (attempt - 1))
 
     async def _send_once(
-        self, method: str, url: httpx.URL, headers: Mapping[str, str] | None
+        self,
+        method: str,
+        url: httpx.URL,
+        headers: Mapping[str, str] | None,
+        max_bytes: int | None,
     ) -> Response:
         request = self._client.build_request(method, url, headers=headers)
         started = time.perf_counter()
         raw = await self._client.send(request, stream=True)
         try:
-            body, truncated = await self._read_capped(raw)
+            body, truncated = await self._read_capped(raw, max_bytes or self.max_body_bytes)
         finally:
             await raw.aclose()
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -292,11 +324,11 @@ class HTTPClient:
             exchange=exchange,
         )
 
-    async def _read_capped(self, raw: httpx.Response) -> tuple[bytes, bool]:
+    async def _read_capped(self, raw: httpx.Response, limit: int) -> tuple[bytes, bool]:
         chunks: list[bytes] = []
         size = 0
         async for chunk in raw.aiter_bytes():
-            room = self.max_body_bytes - size
+            room = limit - size
             if len(chunk) > room:
                 chunks.append(chunk[:room])
                 return b"".join(chunks), True

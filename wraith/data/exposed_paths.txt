@@ -1,0 +1,68 @@
+# Sensitive-file wordlist for the exposed_files check.
+#
+# Format (one entry per line, fields separated by " | "):
+#   path | severity | flags | title | signature
+#
+# signature  Python regex matched against the raw response BYTES (so binary magic numbers like
+#            \x1f\x8b work). A file is reported only if the response is 200 and the signature
+#            matches: this content verification is what keeps false positives out.
+# flags      "-" or "html". Without "html", responses that are HTML documents are ignored, so
+#            catch-all pages and soft 404s cannot match.
+
+# Version control
+/.git/HEAD | high | - | Git repository exposed | ^(ref: refs/|[0-9a-f]{40}\s*$)
+/.git/config | high | - | Git repository config exposed | (?m)^\s*\[(core|remote "[^"]*")\]
+/.svn/entries | high | - | Subversion working copy exposed | ^(\d+\s*\n|<\?xml[^>]*>\s*<wc-entries)
+/.svn/wc.db | high | - | Subversion working copy database exposed | ^SQLite format 3\x00
+/.hg/requires | high | - | Mercurial repository exposed | (?m)^(revlogv1|store|fncache|dotencode)\s*$
+/.bzr/branch-format | high | - | Bazaar repository exposed | Bazaar
+
+# Environment and secrets
+/.env | high | - | Environment file exposed | (?m)^\s*(export\s+)?[A-Z][A-Z0-9_]{2,}\s*=
+/.env.local | high | - | Environment file exposed | (?m)^\s*(export\s+)?[A-Z][A-Z0-9_]{2,}\s*=
+/.env.production | high | - | Environment file exposed | (?m)^\s*(export\s+)?[A-Z][A-Z0-9_]{2,}\s*=
+/.env.backup | high | - | Environment file exposed | (?m)^\s*(export\s+)?[A-Z][A-Z0-9_]{2,}\s*=
+/.aws/credentials | critical | - | AWS credentials file exposed | (?i)aws_access_key_id\s*=
+/.ssh/id_rsa | critical | - | SSH private key exposed | -----BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----
+/id_rsa | critical | - | SSH private key exposed | -----BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----
+/.htpasswd | high | - | htpasswd credential file exposed | (?m)^[^:\s]+:(\$apr1\$|\$2[aby]\$|\{SHA\}|\$[56]\$)
+/.npmrc | high | - | npm config with registry credentials exposed | (_authToken|_auth\s*=|_password\s*=)
+/.vscode/sftp.json | high | - | VS Code SFTP config exposed | "protocol"\s*:\s*"s?ftp"
+/.docker/config.json | critical | - | Docker registry credentials exposed | "auths"\s*:
+
+# Source backups
+/config.php.bak | high | - | PHP source backup exposed | <\?php
+/config.php~ | high | - | PHP source backup exposed | <\?php
+/config.php.old | high | - | PHP source backup exposed | <\?php
+/wp-config.php.bak | high | - | WordPress config backup exposed | <\?php
+/wp-config.php~ | high | - | WordPress config backup exposed | <\?php
+/wp-config.php.old | high | - | WordPress config backup exposed | <\?php
+/wp-config.php.save | high | - | WordPress config backup exposed | <\?php
+/.wp-config.php.swp | high | - | WordPress config editor swap file exposed | ^b0VIM
+
+# Archives and database dumps
+/backup.zip | high | - | Backup archive exposed | ^PK\x03\x04
+/site.zip | high | - | Backup archive exposed | ^PK\x03\x04
+/www.zip | high | - | Backup archive exposed | ^PK\x03\x04
+/backup.tar.gz | high | - | Backup archive exposed | ^\x1f\x8b
+/backup.tgz | high | - | Backup archive exposed | ^\x1f\x8b
+/backup.sql | high | - | Database dump exposed | (CREATE TABLE|INSERT INTO|-- MySQL dump|PostgreSQL database dump)
+/dump.sql | high | - | Database dump exposed | (CREATE TABLE|INSERT INTO|-- MySQL dump|PostgreSQL database dump)
+/database.sql | high | - | Database dump exposed | (CREATE TABLE|INSERT INTO|-- MySQL dump|PostgreSQL database dump)
+/db.sql | high | - | Database dump exposed | (CREATE TABLE|INSERT INTO|-- MySQL dump|PostgreSQL database dump)
+
+# Diagnostics and admin endpoints
+/phpinfo.php | medium | html | phpinfo() page exposed | <title>(PHP \d[^<]*- )?phpinfo\(\)</title>
+/info.php | medium | html | phpinfo() page exposed | <title>(PHP \d[^<]*- )?phpinfo\(\)</title>
+/server-status | medium | html | Apache server-status exposed | <h1>Apache Server Status for
+/server-info | medium | html | Apache server-info exposed | <h1>Apache Server Information</h1>
+/elmah.axd | medium | html | ELMAH error log exposed | Error Log for
+/trace.axd | medium | html | ASP.NET trace viewer exposed | Application Trace
+/actuator/env | high | - | Spring Boot actuator env endpoint exposed | "(propertySources|activeProfiles)"
+/actuator/heapdump | critical | - | Spring Boot heap dump exposed | ^(JAVA PROFILE|\x1f\x8b)
+
+# Editor and OS metadata
+/.DS_Store | low | - | macOS .DS_Store file listing exposed | ^\x00\x00\x00\x01Bud1
+/.idea/workspace.xml | low | - | JetBrains project metadata exposed | <project version=
+/docker-compose.yml | medium | - | docker-compose file exposed | (?m)^services:\s*$
+/web.config | medium | - | IIS web.config exposed | <configuration[\s>]

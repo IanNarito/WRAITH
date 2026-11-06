@@ -11,7 +11,7 @@ def serve_bare_page(httpserver: HTTPServer) -> None:
 
 
 def scan_args(httpserver: HTTPServer, *extra: str) -> list[str]:
-    return ["scan", httpserver.url_for("/"), "--scope", "localhost", "--rate", "1000", *extra]
+    return ["scan", httpserver.url_for("/"), "--scope", "127.0.0.1", "--rate", "1000", *extra]
 
 
 def test_scan_requires_authorization_when_not_interactive(httpserver: HTTPServer) -> None:

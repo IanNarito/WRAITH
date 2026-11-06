@@ -1,0 +1,117 @@
+# Technology signatures for the tech_fingerprint check.
+#
+# Each technology may match on any of these sources (all regexes, case-insensitive):
+#   headers:   {header-name: regex on each value}
+#   cookies:   regex on Set-Cookie names of the base response
+#   generator: regex on <meta name="generator"> content
+#   scripts:   regex on <script src> URLs
+#   body:      regex on HTML page bodies
+# The first non-empty capture group, if any, is taken as the version.
+# hide_version: optional remediation text for version disclosure.
+
+technologies:
+  # Web servers / proxies
+  - name: nginx
+    category: Web server
+    headers: {server: '\bnginx(?:/(\d+\.\d+(?:\.\d+)?))?'}
+    hide_version: Set "server_tokens off;" in the nginx http block.
+  - name: Apache httpd
+    category: Web server
+    headers: {server: '\bApache(?:/(\d+\.\d+(?:\.\d+)?))?'}
+    hide_version: Set "ServerTokens Prod" and "ServerSignature Off".
+  - name: Microsoft IIS
+    category: Web server
+    headers: {server: 'Microsoft-IIS(?:/(\d+\.\d+))?'}
+    hide_version: Remove the Server header with URL Rewrite or "removeServerHeader" in requestFiltering.
+  - name: LiteSpeed
+    category: Web server
+    headers: {server: '\bLiteSpeed\b'}
+  - name: Caddy
+    category: Web server
+    headers: {server: '^Caddy\b'}
+  - name: Apache Tomcat
+    category: Application server
+    headers: {server: 'Apache-Coyote|Tomcat(?:/(\d+\.\d+(?:\.\d+)?))?'}
+  - name: OpenSSL
+    category: Library
+    headers: {server: '\bOpenSSL/(\d+\.\d+\.\d+[a-z]?)'}
+    hide_version: Suppress module versions in the Server banner (e.g. Apache "ServerTokens Prod").
+  - name: Cloudflare
+    category: CDN
+    headers: {server: '^cloudflare$', cf-ray: '.'}
+  - name: Varnish
+    category: Cache
+    headers: {x-varnish: '.', via: '\bvarnish\b'}
+
+  # Languages / frameworks
+  - name: PHP
+    category: Language
+    headers: {x-powered-by: '\bPHP(?:/(\d+\.\d+(?:\.\d+)?))?'}
+    cookies: '^PHPSESSID$'
+    hide_version: Set "expose_php = Off" in php.ini.
+  - name: ASP.NET
+    category: Framework
+    headers:
+      x-powered-by: '\bASP\.NET\b'
+      x-aspnet-version: '(\d+\.\d+(?:\.\d+)*)'
+      x-aspnetmvc-version: '.'
+    cookies: '^ASP\.NET_SessionId$|^\.ASPXAUTH$'
+    hide_version: Set <httpRuntime enableVersionHeader="false"/> and remove X-Powered-By in IIS.
+  - name: Express
+    category: Framework
+    headers: {x-powered-by: '^Express$'}
+    hide_version: Call app.disable("x-powered-by") or use helmet.
+  - name: Next.js
+    category: Framework
+    headers: {x-powered-by: '\bNext\.js(?: (\d+\.\d+(?:\.\d+)?))?'}
+    body: '/_next/static/'
+  - name: Java Servlet
+    category: Language
+    cookies: '^JSESSIONID$'
+  - name: Laravel
+    category: Framework
+    cookies: '^laravel_session$'
+  - name: Django
+    category: Framework
+    cookies: '^(csrftoken|sessionid)$'
+    body: 'name="csrfmiddlewaretoken"'
+  - name: Ruby on Rails
+    category: Framework
+    cookies: '^_[a-z0-9_]+_session$'
+    headers: {x-powered-by: 'Phusion Passenger'}
+
+  # CMS
+  - name: WordPress
+    category: CMS
+    generator: '^WordPress(?:\s+(\d+\.\d+(?:\.\d+)?))?'
+    body: '/wp-content/|/wp-includes/'
+    hide_version: Remove the generator meta tag (remove_action('wp_head', 'wp_generator')).
+  - name: Drupal
+    category: CMS
+    generator: '^Drupal(?:\s+(\d+))?'
+    headers: {x-generator: '^Drupal(?:\s+(\d+))?', x-drupal-cache: '.'}
+  - name: Joomla
+    category: CMS
+    generator: '^Joomla!?(?:\s+(\d+\.\d+(?:\.\d+)?))?'
+  - name: Hugo
+    category: Static site generator
+    generator: '^Hugo(?:\s+(\d+\.\d+(?:\.\d+)?))?'
+
+  # JavaScript libraries
+  - name: jQuery
+    category: JavaScript library
+    scripts: 'jquery[.-]?(\d+\.\d+(?:\.\d+)?)?(?:\.slim)?(?:\.min)?\.js'
+  - name: Bootstrap
+    category: UI framework
+    scripts: 'bootstrap(?:\.bundle)?(?:[.-](\d+\.\d+\.\d+))?(?:\.min)?\.js'
+  - name: AngularJS
+    category: JavaScript framework
+    scripts: 'angular(?:[.-](\d+\.\d+\.\d+))?(?:\.min)?\.js'
+    body: '\bng-app\b'
+  - name: React
+    category: JavaScript framework
+    scripts: 'react(?:-dom)?(?:[.@-](\d+\.\d+\.\d+))?(?:\.production)?(?:\.min)?\.js'
+    body: 'data-reactroot'
+  - name: Vue.js
+    category: JavaScript framework
+    scripts: 'vue(?:[.@-](\d+\.\d+\.\d+))?(?:\.global)?(?:\.prod)?(?:\.min)?\.js'
