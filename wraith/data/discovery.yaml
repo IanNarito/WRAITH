@@ -1,0 +1,27 @@
+# Rules for the lightweight discovery pass.
+
+# Same-origin links with these extensions are not fetched as pages.
+skip_extensions:
+  [.png, .jpg, .jpeg, .gif, .svg, .ico, .webp, .bmp, .avif,
+   .css, .js, .mjs, .map, .woff, .woff2, .ttf, .eot, .otf,
+   .pdf, .zip, .gz, .tgz, .bz2, .xz, .rar, .7z, .tar,
+   .mp3, .mp4, .m4a, .avi, .mov, .webm, .ogg, .wav,
+   .doc, .docx, .xls, .xlsx, .ppt, .pptx, .odt, .exe, .msi, .dmg, .iso, .apk]
+
+# Case-insensitive regexes matched against a link's path and query. Matching links are
+# recorded in the context but never requested: even a GET to them can change state.
+unsafe_link_patterns:
+  - 'log[-_]?(out|off)'
+  - 'sign[-_]?(out|off)'
+  - '(^|[/_?&=.-])(delete|remove|destroy|drop|purge|reset|unsubscribe|deactivate)([/_?&=.-]|$)'
+
+# Response headers recorded as technology hints for the fingerprint check.
+tech_hint_headers:
+  - server
+  - x-powered-by
+  - x-aspnet-version
+  - x-aspnetmvc-version
+  - x-generator
+  - x-drupal-cache
+  - x-varnish
+  - via
