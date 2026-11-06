@@ -226,6 +226,7 @@ class HTTPClient:
         follow_redirects: bool = True,
         max_bytes: int | None = None,
         data: Mapping[str, str] | None = None,
+        content: str | bytes | None = None,
     ) -> Response:
         method = method.upper()
         if self.safe_mode and method not in SAFE_METHODS:
@@ -240,8 +241,8 @@ class HTTPClient:
 
         hops: list[Exchange] = []
         for _ in range(self.max_redirects + 1):
-            response = await self._send(method, current, headers, max_bytes, data)
-            data = None  # a body belongs only to the first request, not to any redirected GET
+            response = await self._send(method, current, headers, max_bytes, data, content)
+            data = content = None  # a body belongs only to the first request, not a redirected GET
             location = response.headers.get("location")
             if (
                 not follow_redirects
@@ -271,13 +272,14 @@ class HTTPClient:
         headers: Mapping[str, str] | None,
         max_bytes: int | None,
         data: Mapping[str, str] | None = None,
+        content: str | bytes | None = None,
     ) -> Response:
         attempt = 0
         while True:
             await self._bucket.acquire()
             try:
                 async with self._semaphore:
-                    return await self._send_once(method, url, headers, max_bytes, data)
+                    return await self._send_once(method, url, headers, max_bytes, data, content)
             except httpx.TransportError as exc:
                 if attempt >= self.max_retries:
                     logger.info(
@@ -297,8 +299,11 @@ class HTTPClient:
         headers: Mapping[str, str] | None,
         max_bytes: int | None,
         data: Mapping[str, str] | None = None,
+        content: str | bytes | None = None,
     ) -> Response:
-        request = self._client.build_request(method, url, headers=headers, data=data)
+        request = self._client.build_request(
+            method, url, headers=headers, data=data, content=content
+        )
         started = time.perf_counter()
         raw = await self._client.send(request, stream=True)
         try:
