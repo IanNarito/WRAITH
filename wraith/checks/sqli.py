@@ -39,6 +39,14 @@ REFERENCES = (
 _LEN_TOLERANCE = 0.02
 _LEN_DIFFERENCE = 0.30
 
+# Time-based blind: the slowest, most load-sensitive technique, so it is tightly bounded. It
+# runs only after error- and boolean-based find nothing, on at most TIME_BUDGET points per scan,
+# with a single sleeping request confirmed by one fast control request (to rule out an endpoint
+# that is simply slow). A delayed response must exceed baseline + TIME_DELAY * TIME_RATIO seconds.
+TIME_DELAY = 5  # seconds the injected payload asks the database to sleep
+TIME_RATIO = 0.6
+TIME_BUDGET = 8
+
 
 @dataclass(frozen=True)
 class SqlErrorSignature:
@@ -69,13 +77,16 @@ class SqliCheck(BaseCheck):
     requires_aggressive = True
 
     async def run(self, ctx: ScanContext, http: HTTPClient) -> AsyncIterator[Finding]:
+        time_budget = [TIME_BUDGET]
         for point in points_from_context(ctx)[:MAX_POINTS]:
-            finding = await _probe_point(http, point)
+            finding = await _probe_point(http, point, time_budget)
             if finding is not None:
                 yield finding
 
 
-async def _probe_point(http: HTTPClient, point: InjectionPoint) -> Finding | None:
+async def _probe_point(
+    http: HTTPClient, point: InjectionPoint, time_budget: list[int]
+) -> Finding | None:
     base_value = point.baseline()
     try:
         baseline = await send_probe(http, point, base_value or "1")
@@ -87,8 +98,15 @@ async def _probe_point(http: HTTPClient, point: InjectionPoint) -> Finding | Non
     if error_finding is not None:
         return error_finding
     if baseline_error is not None:
-        return None  # app shows SQL errors regardless; boolean test would be unreliable
-    return await _boolean_based(http, point, baseline)
+        return None  # app shows SQL errors regardless; boolean/time tests would be unreliable
+
+    boolean_finding = await _boolean_based(http, point, baseline)
+    if boolean_finding is not None:
+        return boolean_finding
+    if time_budget[0] > 0:
+        time_budget[0] -= 1
+        return await _time_based(http, point, baseline)
+    return None
 
 
 async def _error_based(
@@ -154,6 +172,55 @@ async def _boolean_based(
                 false_resp,
                 None,
             )
+    return None
+
+
+async def _time_based(
+    http: HTTPClient, point: InjectionPoint, baseline: Response
+) -> Finding | None:
+    delay = TIME_DELAY
+    base_ms = baseline.exchange.elapsed_ms
+    threshold_ms = base_ms + delay * 1000 * TIME_RATIO
+    base_value = point.baseline() or "1"
+    payloads = (
+        f"{base_value}' AND SLEEP({delay})-- -",
+        f"{base_value}' OR SLEEP({delay})-- -",
+        f"{base_value} AND SLEEP({delay})",
+        f"{base_value}' AND pg_sleep({delay})-- -",
+        f"{base_value}'; WAITFOR DELAY '0:0:{delay}'-- -",
+    )
+    for payload in payloads:
+        try:
+            delayed = await send_probe(http, point, payload)
+        except HTTPClientError:
+            continue
+        if delayed.exchange.elapsed_ms < threshold_ms:
+            continue
+        # Confirm: the same statement with a zero delay must come back fast. If it is also slow,
+        # the endpoint is simply slow and this is not a time-based injection.
+        control_payload = (
+            payload.replace(f"SLEEP({delay})", "SLEEP(0)")
+            .replace(f"pg_sleep({delay})", "pg_sleep(0)")
+            .replace(f"0:0:{delay}", "0:0:0")
+        )
+        try:
+            control = await send_probe(http, point, control_payload)
+        except HTTPClientError:
+            continue
+        if control.exchange.elapsed_ms >= threshold_ms:
+            continue
+        return _finding(
+            point,
+            "time-based blind",
+            Severity.HIGH,
+            f"A payload asking the database to sleep for {delay}s delayed the response "
+            f"({delayed.exchange.elapsed_ms:.0f} ms vs {base_ms:.0f} ms baseline), while the same "
+            f"statement with a zero delay returned quickly ({control.exchange.elapsed_ms:.0f} ms). "
+            "The injected condition is executed by the database, so data can be inferred even "
+            "though no output or error is shown (blind injection).",
+            delayed,
+            None,
+        )
     return None
 
 
