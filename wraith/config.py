@@ -55,6 +55,9 @@ class ScanConfig:
     cve_cache: Path | None = None
     crawl_depth: int = 1  # same-origin BFS depth: 1 = links on the target page only
     max_pages: int = 30
+    login_url: str | None = None  # form-login endpoint; scanning proceeds authenticated
+    login_data: dict[str, str] = field(default_factory=dict)
+    login_check: str | None = None  # substring expected in the post-login response
 
 
 # Config-file key -> CLI parameter name.
@@ -78,6 +81,9 @@ FILE_KEYS: dict[str, str] = {
     "cve_cache": "cve_cache",
     "crawl_depth": "crawl_depth",
     "max_pages": "max_pages",
+    "login_url": "login_url",
+    "login_data": "login_data",
+    "login_check": "login_check",
 }
 FORBIDDEN_FILE_KEYS: dict[str, str] = {
     "target": "pass the target on the command line",
@@ -107,7 +113,7 @@ def load_config_file(path: Path) -> dict[str, Any]:
             raise ConfigError(f"unknown config key {key!r}; allowed: {', '.join(FILE_KEYS)}")
         if name == "headers" and isinstance(value, dict):
             value = [f"{k}: {v}" for k, v in value.items()]
-        elif name == "cookies" and isinstance(value, dict):
+        elif name in ("cookies", "login_data") and isinstance(value, dict):
             value = [f"{k}={v}" for k, v in value.items()]
         values[FILE_KEYS[name]] = value
     return values
@@ -133,6 +139,10 @@ def build_config(values: Mapping[str, Any]) -> ScanConfig:
     fail_on = values.get("fail_on")
     cve_cache = values.get("cve_cache")
     api_key = values.get("nvd_api_key") or None
+    login_url = values.get("login_url") or None
+    if login_url is not None:
+        login_url = normalize_target(str(login_url))
+    login_check = values.get("login_check")
     return ScanConfig(
         target=target,
         scope=scope,
@@ -158,6 +168,9 @@ def build_config(values: Mapping[str, Any]) -> ScanConfig:
         cve_cache=Path(cve_cache) if cve_cache is not None else None,
         crawl_depth=int(_number(values.get("crawl_depth", 1), "crawl_depth", minimum=1)),
         max_pages=int(_number(values.get("max_pages", 30), "max_pages", minimum=1)),
+        login_url=login_url,
+        login_data=parse_form_pairs(_strings(values.get("login_data"), "login_data")),
+        login_check=str(login_check) if login_check else None,
     )
 
 
@@ -188,6 +201,17 @@ def parse_headers(values: list[str]) -> dict[str, str]:
             raise ConfigError(f"header must look like 'Name: value', got {raw!r}")
         headers[name.strip()] = val.strip()
     return headers
+
+
+def parse_form_pairs(values: list[str]) -> dict[str, str]:
+    """Parse ``field=value`` login-data arguments (value may contain further '=')."""
+    pairs: dict[str, str] = {}
+    for raw in values:
+        name, sep, val = raw.partition("=")
+        if not sep or not name.strip():
+            raise ConfigError(f"login-data must look like 'field=value', got {raw!r}")
+        pairs[name.strip()] = val
+    return pairs
 
 
 def parse_cookies(values: list[str]) -> dict[str, str]:

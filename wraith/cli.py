@@ -119,6 +119,18 @@ def scan(
         ),
     ] = 1,
     max_pages: Annotated[int, typer.Option(min=1, help="Maximum pages to crawl.")] = 30,
+    login_url: Annotated[
+        str | None,
+        typer.Option(help="Form-login URL; WRAITH logs in and scans with the resulting session."),
+    ] = None,
+    login_data: Annotated[
+        list[str] | None,
+        typer.Option(help="Login form field 'name=value' (repeatable), e.g. username=admin."),
+    ] = None,
+    login_check: Annotated[
+        str | None,
+        typer.Option(help="Substring expected in the post-login response to confirm success."),
+    ] = None,
     cve: Annotated[
         bool,
         typer.Option(

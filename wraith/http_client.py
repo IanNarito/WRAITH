@@ -190,6 +190,9 @@ class HTTPClient:
     def requests_sent(self) -> int:
         return len(self.history) + self.raw_probes
 
+    def cookie_names(self) -> list[str]:
+        return [cookie.name for cookie in self._client.cookies.jar]
+
     @asynccontextmanager
     async def raw_slot(self, host: str, port: int, scheme: str = "https") -> AsyncIterator[None]:
         """Gate a non-HTTP connection (e.g. a raw TLS handshake) through scope + rate limits.
@@ -227,9 +230,10 @@ class HTTPClient:
         max_bytes: int | None = None,
         data: Mapping[str, str] | None = None,
         content: str | bytes | None = None,
+        allow_unsafe: bool = False,
     ) -> Response:
         method = method.upper()
-        if self.safe_mode and method not in SAFE_METHODS:
+        if self.safe_mode and method not in SAFE_METHODS and not allow_unsafe:
             logger.warning("safe mode BLOCK %s %s (not sent)", method, url)
             raise UnsafeMethodError(f"{method} is not allowed in safe mode (needs --aggressive)")
         try:

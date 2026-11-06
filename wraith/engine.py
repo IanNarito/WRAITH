@@ -15,7 +15,7 @@ from wraith.config import ScanConfig
 from wraith.context import ScanContext
 from wraith.cve import CveCorrelator
 from wraith.discovery import DiscoveryError, discover
-from wraith.http_client import HTTPClient
+from wraith.http_client import HTTPClient, HTTPClientError
 from wraith.models import Finding, Severity
 from wraith.registry import PluginRegistry, RegistryError
 from wraith.scope import ScopeError, ScopeManager
@@ -68,6 +68,27 @@ class Engine:
         self._transport = transport
         self._correlator = correlator  # injected in tests; built from config otherwise
 
+    async def _login(self, config: ScanConfig, http: HTTPClient, scope: ScopeManager) -> None:
+        """Establish an authenticated session before scanning (session cookies persist)."""
+        assert config.login_url is not None
+        if not scope.is_in_scope(config.login_url):
+            raise ScanError(f"login URL {config.login_url} is outside the declared scope")
+        logger.info("authenticating via form login at %s", config.login_url)
+        try:
+            # Login is an explicit, user-authorized action, so the POST is allowed even in safe
+            # mode. It is still scope-checked, rate-limited, and recorded in the audit log.
+            response = await http.request(
+                "POST", config.login_url, data=config.login_data, allow_unsafe=True
+            )
+        except HTTPClientError as exc:
+            raise ScanError(f"login request failed: {exc}") from exc
+        if config.login_check is not None and config.login_check not in response.text:
+            raise ScanError(
+                f"login appears to have failed: expected indicator {config.login_check!r} not "
+                "found in the response. Check --login-url, --login-data, and --login-check."
+            )
+        logger.info("login succeeded; session cookies: %s", list(http.cookie_names()))
+
     def _build_correlator(self, config: ScanConfig) -> CveCorrelator | None:
         if self._correlator is not None:
             return self._correlator
@@ -98,6 +119,8 @@ class Engine:
         correlator = self._build_correlator(config)
         try:
             async with HTTPClient(config, scope, transport=self._transport) as http:
+                if config.login_url is not None:
+                    await self._login(config, http, scope)
                 try:
                     ctx = await discover(
                         config.target,
