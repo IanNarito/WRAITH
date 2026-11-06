@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from wraith.http_client import Exchange
+
+if TYPE_CHECKING:
+    from wraith.cve import CveCorrelator
 
 HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
 
@@ -79,6 +83,8 @@ class ScanContext:
     tech_hints: tuple[TechHint, ...]
     off_scope_urls: tuple[str, ...]  # discovered but out of scope: recorded, never requested
     unsafe_urls: tuple[str, ...]  # in scope but look state-changing (logout, delete): not requested
+    # Optional CVE correlator (contacts NVD, not the target). None unless --cve is set.
+    cve: CveCorrelator | None = None
 
     @property
     def base_url(self) -> str:

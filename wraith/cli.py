@@ -112,6 +112,21 @@ def scan(
     verbose: Annotated[
         int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity (-v, -vv).")
     ] = 0,
+    cve: Annotated[
+        bool,
+        typer.Option(
+            "--cve/--no-cve",
+            help="Correlate detected versions against NVD. Contacts NVD (not the target).",
+        ),
+    ] = False,
+    nvd_api_key: Annotated[
+        str | None,
+        typer.Option(envvar="NVD_API_KEY", help="NVD API key (raises the CVE lookup rate limit)."),
+    ] = None,
+    cve_cache: Annotated[
+        Path | None,
+        typer.Option(file_okay=False, help="Directory to cache NVD results. Default: no cache."),
+    ] = None,
     config_file: Annotated[
         Path | None,
         typer.Option(

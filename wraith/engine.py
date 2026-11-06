@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 import httpx
@@ -13,6 +13,7 @@ import httpx
 from wraith.checks.base import BaseCheck
 from wraith.config import ScanConfig
 from wraith.context import ScanContext
+from wraith.cve import CveCorrelator
 from wraith.discovery import DiscoveryError, discover
 from wraith.http_client import HTTPClient
 from wraith.models import Finding, Severity
@@ -60,10 +61,19 @@ class Engine:
         *,
         registry: PluginRegistry | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        correlator: CveCorrelator | None = None,
     ) -> None:
         self.config = config
         self.registry = registry or PluginRegistry()
         self._transport = transport
+        self._correlator = correlator  # injected in tests; built from config otherwise
+
+    def _build_correlator(self, config: ScanConfig) -> CveCorrelator | None:
+        if self._correlator is not None:
+            return self._correlator
+        if not config.cve:
+            return None
+        return CveCorrelator(api_key=config.nvd_api_key, cache_dir=config.cve_cache)
 
     async def run(self) -> ScanResult:
         config = self.config
@@ -85,17 +95,25 @@ class Engine:
         if not checks:
             raise ScanError("no checks selected")
 
-        async with HTTPClient(config, scope, transport=self._transport) as http:
-            try:
-                ctx = await discover(config.target, http, scope)
-            except DiscoveryError as exc:
-                raise ScanError(str(exc)) from exc
-            logger.info("running %d checks: %s", len(checks), ", ".join(c.name for c in checks))
-            semaphore = asyncio.Semaphore(config.concurrency)
-            outcomes = await asyncio.gather(
-                *(self._run_check(check, ctx, http, semaphore) for check in checks)
-            )
-            requests_sent = http.requests_sent
+        correlator = self._build_correlator(config)
+        try:
+            async with HTTPClient(config, scope, transport=self._transport) as http:
+                try:
+                    ctx = await discover(config.target, http, scope)
+                except DiscoveryError as exc:
+                    raise ScanError(str(exc)) from exc
+                if correlator is not None:
+                    logger.info("CVE correlation enabled: detected versions will be sent to NVD")
+                    ctx = replace(ctx, cve=correlator)
+                logger.info("running %d checks: %s", len(checks), ", ".join(c.name for c in checks))
+                semaphore = asyncio.Semaphore(config.concurrency)
+                outcomes = await asyncio.gather(
+                    *(self._run_check(check, ctx, http, semaphore) for check in checks)
+                )
+                requests_sent = http.requests_sent
+        finally:
+            if correlator is not None:
+                await correlator.aclose()
         logger.info(
             "scan finished: %d request(s) sent, %d blocked out of scope",
             requests_sent,

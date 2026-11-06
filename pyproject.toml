@@ -51,6 +51,10 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+# Tests may do blocking file I/O inside async test functions; that is not a concern here.
+"tests/**" = ["ASYNC230", "ASYNC240"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

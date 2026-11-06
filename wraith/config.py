@@ -50,6 +50,9 @@ class ScanConfig:
     safe_mode: bool = True
     fail_on: Severity | None = None
     verbosity: int = 0
+    cve: bool = False  # correlate detected versions against NVD (contacts NVD, not the target)
+    nvd_api_key: str | None = None
+    cve_cache: Path | None = None
 
 
 # Config-file key -> CLI parameter name.
@@ -69,10 +72,13 @@ FILE_KEYS: dict[str, str] = {
     "safe_mode": "safe_mode",
     "fail_on": "fail_on",
     "verbose": "verbose",
+    "cve": "cve",
+    "cve_cache": "cve_cache",
 }
 FORBIDDEN_FILE_KEYS: dict[str, str] = {
     "target": "pass the target on the command line",
     "confirm_authorized": "authorization must be affirmed on the command line for each run",
+    "nvd_api_key": "pass the NVD API key via --nvd-api-key or the NVD_API_KEY environment variable",
 }
 
 
@@ -121,6 +127,8 @@ def build_config(values: Mapping[str, Any]) -> ScanConfig:
 
     output = values.get("output")
     fail_on = values.get("fail_on")
+    cve_cache = values.get("cve_cache")
+    api_key = values.get("nvd_api_key") or None
     return ScanConfig(
         target=target,
         scope=scope,
@@ -141,6 +149,9 @@ def build_config(values: Mapping[str, Any]) -> ScanConfig:
         safe_mode=_bool(values.get("safe_mode", True), "safe_mode"),
         fail_on=None if fail_on is None else _enum(Severity, fail_on, Severity.INFO),
         verbosity=int(_number(values.get("verbose", 0) or 0, "verbose", minimum=0)),
+        cve=_bool(values.get("cve", False), "cve"),
+        nvd_api_key=str(api_key) if api_key is not None else None,
+        cve_cache=Path(cve_cache) if cve_cache is not None else None,
     )
 
 

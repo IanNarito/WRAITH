@@ -12,14 +12,17 @@
 technologies:
   # Web servers / proxies
   - name: nginx
+    cpe: cpe:2.3:a:f5:nginx
     category: Web server
     headers: {server: '\bnginx(?:/(\d+\.\d+(?:\.\d+)?))?'}
     hide_version: Set "server_tokens off;" in the nginx http block.
   - name: Apache httpd
+    cpe: cpe:2.3:a:apache:http_server
     category: Web server
     headers: {server: '\bApache(?:/(\d+\.\d+(?:\.\d+)?))?'}
     hide_version: Set "ServerTokens Prod" and "ServerSignature Off".
   - name: Microsoft IIS
+    cpe: cpe:2.3:a:microsoft:internet_information_services
     category: Web server
     headers: {server: 'Microsoft-IIS(?:/(\d+\.\d+))?'}
     hide_version: Remove the Server header with URL Rewrite or "removeServerHeader" in requestFiltering.
@@ -30,9 +33,11 @@ technologies:
     category: Web server
     headers: {server: '^Caddy\b'}
   - name: Apache Tomcat
+    cpe: cpe:2.3:a:apache:tomcat
     category: Application server
     headers: {server: 'Apache-Coyote|Tomcat(?:/(\d+\.\d+(?:\.\d+)?))?'}
   - name: OpenSSL
+    cpe: cpe:2.3:a:openssl:openssl
     category: Library
     headers: {server: '\bOpenSSL/(\d+\.\d+\.\d+[a-z]?)'}
     hide_version: Suppress module versions in the Server banner (e.g. Apache "ServerTokens Prod").
@@ -45,6 +50,7 @@ technologies:
 
   # Languages / frameworks
   - name: PHP
+    cpe: cpe:2.3:a:php:php
     category: Language
     headers: {x-powered-by: '\bPHP(?:/(\d+\.\d+(?:\.\d+)?))?'}
     cookies: '^PHPSESSID$'
@@ -62,6 +68,7 @@ technologies:
     headers: {x-powered-by: '^Express$'}
     hide_version: Call app.disable("x-powered-by") or use helmet.
   - name: Next.js
+    cpe: cpe:2.3:a:vercel:next.js
     category: Framework
     headers: {x-powered-by: '\bNext\.js(?: (\d+\.\d+(?:\.\d+)?))?'}
     body: '/_next/static/'
@@ -82,11 +89,13 @@ technologies:
 
   # CMS
   - name: WordPress
+    cpe: cpe:2.3:a:wordpress:wordpress
     category: CMS
     generator: '^WordPress(?:\s+(\d+\.\d+(?:\.\d+)?))?'
     body: '/wp-content/|/wp-includes/'
     hide_version: Remove the generator meta tag (remove_action('wp_head', 'wp_generator')).
   - name: Drupal
+    cpe: cpe:2.3:a:drupal:drupal
     category: CMS
     generator: '^Drupal(?:\s+(\d+))?'
     headers: {x-generator: '^Drupal(?:\s+(\d+))?', x-drupal-cache: '.'}
@@ -99,12 +108,15 @@ technologies:
 
   # JavaScript libraries
   - name: jQuery
+    cpe: cpe:2.3:a:jquery:jquery
     category: JavaScript library
     scripts: 'jquery[.-]?(\d+\.\d+(?:\.\d+)?)?(?:\.slim)?(?:\.min)?\.js'
   - name: Bootstrap
+    cpe: cpe:2.3:a:getbootstrap:bootstrap
     category: UI framework
     scripts: 'bootstrap(?:\.bundle)?(?:[.-](\d+\.\d+\.\d+))?(?:\.min)?\.js'
   - name: AngularJS
+    cpe: cpe:2.3:a:angularjs:angular.js
     category: JavaScript framework
     scripts: 'angular(?:[.-](\d+\.\d+\.\d+))?(?:\.min)?\.js'
     body: '\bng-app\b'
@@ -113,5 +125,6 @@ technologies:
     scripts: 'react(?:-dom)?(?:[.@-](\d+\.\d+\.\d+))?(?:\.production)?(?:\.min)?\.js'
     body: 'data-reactroot'
   - name: Vue.js
+    cpe: cpe:2.3:a:vuejs:vue
     category: JavaScript framework
     scripts: 'vue(?:[.@-](\d+\.\d+\.\d+))?(?:\.global)?(?:\.prod)?(?:\.min)?\.js'
