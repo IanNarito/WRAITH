@@ -90,8 +90,38 @@ time delays). Findings are `probable` — confirm manually.
 
 | Check | What it looks for | Technique |
 |---|---|---|
-| `xss_reflected` | Reflected cross-site scripting | A unique marker is injected; flagged if its angle brackets are reflected unencoded into HTML. Uses a non-executing tag, not a live script |
-| `sqli` | SQL injection | Error-based (a quote triggers a DB error absent from the baseline) and a strict boolean-differential fallback |
+| `xss_reflected` | Reflected cross-site scripting | Unique marker reflected unencoded into HTML; non-executing tag, not a live script |
+| `xss_stored` | Stored/persistent XSS | Submits a non-executing marker to each form once, re-checks pages for unencoded persistence |
+| `sqli` | SQL injection | Error-based, strict boolean-differential, and tightly-bounded time-based blind (one sleeping request confirmed by a fast control) |
+| `path_traversal` | Path traversal / LFI | Reads `/etc/passwd` or `win.ini` (harmless marker files), confirmed by content signature |
+| `open_redirect` | Unvalidated redirects | Injects a reserved-domain marker; flags redirects to it (never followed) |
+| `ssrf` | Server-side request forgery | Conservative in-band only: an unresolvable `*.invalid` marker + a fetch-error differential (no third party ever contacted, no OOB) |
+| `xxe` | XML external entity | Internal-entity expansion only (no external entities / DTD fetch / DoS); MEDIUM/PROBABLE |
+| `crlf_injection` | HTTP response splitting | Injects CR-LF + marker header; confirmed if emitted as a real response header |
+| `host_header_injection` | Host-header poisoning | Spoofs Host/X-Forwarded-Host; flags reflection into body/Location |
+| `content_discovery` | Unlinked paths (off by default) | Small wordlist brute force, GET-only, soft-404 calibration, request budget |
+| `param_mining` | Hidden parameters (off by default) | Many candidate names per request; flags reflected unknown parameters |
+
+**DoS safety:** all checks share one HTTP client whose global token-bucket rate limit
+(`--rate`, default 5/s) and concurrency cap (`--concurrency`) bound the *total* request rate,
+so adding checks never increases load. Active checks are non-destructive (no data extraction,
+no stacked queries; time-based SQLi is strictly budgeted) and verify a differential before
+reporting. `content_discovery` and `param_mining` are off by default — enable with `--checks`.
+
+### Authenticated scanning
+
+Scan as a logged-in user. For token/cookie auth, pass `--header "Authorization: Bearer ..."` or
+`--cookie "session=..."`. For form login:
+
+```bash
+wraith scan https://app.example --confirm-authorized --aggressive \
+  --login-url https://app.example/login \
+  --login-data username=admin --login-data password=secret \
+  --login-check "Dashboard"
+```
+
+WRAITH logs in first (scope-checked, audit-logged), verifies the `--login-check` substring, and
+runs the scan with the resulting session.
 
 ### CVE correlation (`--cve`)
 
@@ -135,6 +165,7 @@ URL, a description, remediation, and evidence (the exact request and the respons
 
 - Raw TLS probes connect directly to the target, not through `--proxy` (a warning is shown).
 - Weak-protocol/cipher detection depends on what the local OpenSSL build can still offer.
-- Injection checks (`xss_reflected`, `sqli`) cover reflected XSS and error/boolean SQLi only;
-  stored/DOM XSS, blind/time-based SQLi, and other injection classes are not yet implemented.
-- No authenticated scanning yet (no login/session handling).
+- SSRF detection is in-band and conservative (no out-of-band collaborator), so it finds only
+  cases that surface a server-side fetch error; blind SSRF needs manual confirmation.
+- XXE proves internal-entity expansion only; external-entity exploitation needs manual testing.
+- DOM-based XSS and second-order injection are not covered.
