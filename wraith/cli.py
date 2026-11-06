@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -16,6 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from wraith import __version__
+from wraith.audit import AuditLog, default_audit_path
 from wraith.config import (
     DEFAULT_CONCURRENCY,
     DEFAULT_RATE,
@@ -27,10 +29,10 @@ from wraith.config import (
     build_config,
     load_config_file,
 )
-from wraith.engine import Engine, ScanError
+from wraith.engine import Engine, ScanError, ScanResult
 from wraith.models import Severity
 from wraith.registry import PluginRegistry, RegistryError
-from wraith.reporting import terminal
+from wraith.reporting import html_report, json_report, sarif_report, terminal
 
 app = typer.Typer(
     name="wraith",
@@ -41,7 +43,6 @@ app = typer.Typer(
 )
 console = Console(stderr=True)  # status, prompts, logs
 out = Console()  # the report itself
-logger = logging.getLogger("wraith")
 
 
 def _version_callback(value: bool) -> None:
@@ -117,6 +118,14 @@ def scan(
             "--config", exists=True, dir_okay=False, help="YAML file of defaults; CLI flags win."
         ),
     ] = None,
+    audit_log: Annotated[
+        Path | None,
+        typer.Option(
+            "--audit-log",
+            dir_okay=False,
+            help="Audit log file. Default: ./wraith-audit-<UTC timestamp>.log",
+        ),
+    ] = None,
 ) -> None:
     """Scan a target for web vulnerabilities."""
     try:
@@ -126,26 +135,78 @@ def scan(
         raise typer.Exit(code=2) from exc
 
     _setup_logging(config.verbosity)
-    if not _authorization_gate(config):
-        raise typer.Exit(code=2)
-    if config.output_format is not OutputFormat.TERMINAL or config.output is not None:
-        console.print(
-            "[yellow]note:[/] json/html/sarif reports and --output are not implemented yet; "
-            "showing terminal output."
-        )
+    audit_path = audit_log or default_audit_path(datetime.now(UTC))
+    try:
+        with AuditLog(audit_path) as audit:
+            code = _run_scan(config, audit)
+    except OSError as exc:  # _run_scan handles its own I/O errors; this is the log itself
+        console.print(Text(f"error: cannot use audit log {audit_path}: {exc}", style="bold red"))
+        raise typer.Exit(code=2) from exc
+    console.print(Text(f"audit log: {audit_path}", style="dim"))
+    raise typer.Exit(code=code)
+
+
+def _run_scan(config: ScanConfig, audit: AuditLog) -> int:
+    audit.record_config(config)
+    affirmed, method = _authorization_gate(config)
+    audit.record_authorization(config, affirmed=affirmed, method=method)
+    if not affirmed:
+        return 2
 
     try:
         with console.status("Scanning...", spinner="dots"):
             result = asyncio.run(Engine(config).run())
     except ScanError as exc:
+        logging.getLogger("wraith.engine").error("scan error: %s", exc)
         console.print(Text("error: ", style="bold red") + Text(str(exc)))
-        raise typer.Exit(code=2) from exc
+        return 2
     except KeyboardInterrupt:
+        logging.getLogger("wraith.engine").error("scan interrupted by user")
         console.print("[bold red]aborted[/]")
-        raise typer.Exit(code=2) from None
+        return 2
 
-    terminal.render(result, out, verbosity=config.verbosity)
-    raise typer.Exit(code=result.exit_code(config.fail_on))
+    try:
+        _write_report(config, result, str(audit.path))
+    except OSError as exc:
+        console.print(Text(f"error: cannot write report: {exc}", style="bold red"))
+        return 2
+    code = result.exit_code(config.fail_on)
+    logging.getLogger("wraith.engine").info(
+        "%d finding(s) %s; exit code %d",
+        len(result.findings),
+        json_report.severity_counts(result),
+        code,
+    )
+    return code
+
+
+def _write_report(config: ScanConfig, result: ScanResult, audit_path: str) -> None:
+    fmt = config.output_format
+    if fmt is OutputFormat.TERMINAL:
+        if config.output is None:
+            terminal.render(result, out, verbosity=config.verbosity)
+            return
+        with config.output.open("w", encoding="utf-8") as fh:
+            file_console = Console(file=fh, width=120, no_color=True, force_terminal=False)
+            terminal.render(result, file_console, verbosity=max(1, config.verbosity))
+    else:
+        if fmt is OutputFormat.JSON:
+            text = json_report.render(result, audit_log=audit_path)
+        elif fmt is OutputFormat.HTML:
+            text = html_report.render(result, audit_log=audit_path)
+        else:
+            text = sarif_report.render(result)
+        if config.output is None:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        else:
+            config.output.write_text(text, encoding="utf-8")
+
+    counts = json_report.severity_counts(result)
+    summary = ", ".join(f"{n} {sev}" for sev, n in counts.items() if n) or "no findings"
+    console.print(Text(f"{len(result.findings)} finding(s): {summary}"))
+    if config.output is not None:
+        console.print(Text(f"{fmt.value} report written to {config.output}", style="green"))
 
 
 @app.command("list-checks")
@@ -169,7 +230,7 @@ def list_checks() -> None:
     out.print(table)
 
 
-def _authorization_gate(config: ScanConfig) -> bool:
+def _authorization_gate(config: ScanConfig) -> tuple[bool, str]:
     """Show the declared scope and require an explicit affirmation of permission."""
     mode = "safe (non-mutating requests only)" if config.safe_mode else "AGGRESSIVE"
     console.print(
@@ -192,27 +253,25 @@ def _authorization_gate(config: ScanConfig) -> bool:
         )
     )
     if config.confirm_authorized:
-        logger.info("authorization affirmed via --confirm-authorized for scope %s", config.scope)
-        return True
+        return True, "--confirm-authorized flag"
     if not sys.stdin.isatty():
         console.print(
             "[bold red]error:[/] --confirm-authorized is required when not running interactively."
         )
-        return False
+        return False, "non-interactive run without --confirm-authorized"
     confirmed = typer.confirm(
         "Do you have explicit permission to test every host in this scope?", default=False
     )
-    if confirmed:
-        logger.info("authorization affirmed interactively for scope %s", config.scope)
-    else:
+    if not confirmed:
         console.print("Not authorized; nothing was sent.")
-    return confirmed
+    return confirmed, "interactive prompt"
 
 
 def _setup_logging(verbosity: int) -> None:
     level = logging.WARNING if verbosity <= 0 else logging.INFO if verbosity == 1 else logging.DEBUG
     handler = RichHandler(console=console, show_path=False, show_time=verbosity >= 2)
-    logging.basicConfig(level=level, format="%(message)s", handlers=[handler], force=True)
+    handler.setLevel(level)  # the audit log (if open) still receives DEBUG
+    logging.basicConfig(level=logging.DEBUG, format="%(message)s", handlers=[handler], force=True)
     for noisy in ("httpx", "httpcore", "hpack", "h2"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
@@ -221,6 +280,7 @@ def _config_from_cli(ctx: typer.Context, config_file: Path | None) -> ScanConfig
     """Merge CLI params with an optional YAML file; explicitly passed flags take precedence."""
     values = dict(ctx.params)
     values.pop("config_file", None)
+    values.pop("audit_log", None)
     if config_file is not None:
         for key, value in load_config_file(config_file).items():
             source = ctx.get_parameter_source(key)

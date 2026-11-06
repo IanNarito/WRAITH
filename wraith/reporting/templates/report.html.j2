@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<title>WRAITH report - {{ ctx.base_url }}</title>
+<style>
+  :root { --fg:#1d1f23; --muted:#5f6673; --line:#e2e5ea; --bg:#f7f8fa; --card:#fff;
+          --critical:#7a0019; --high:#c62828; --medium:#d97706; --low:#0277bd; --info:#607d8b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--fg); background:var(--bg); }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: .02em; }
+  h2 { font-size: 18px; margin: 36px 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .notice { border-left: 4px solid var(--high); background: #fff4f4; padding: 10px 14px; margin: 16px 0 24px; }
+  table { border-collapse: collapse; width: 100%; background: var(--card); }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  td.k { width: 180px; color: var(--muted); }
+  .counts { display: flex; gap: 10px; flex-wrap: wrap; }
+  .count { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; min-width: 110px; }
+  .count b { display: block; font-size: 24px; }
+  .sev { display: inline-block; color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .06em;
+         text-transform: uppercase; padding: 2px 8px; border-radius: 4px; }
+  .sev.critical { background: var(--critical); } .sev.high { background: var(--high); }
+  .sev.medium { background: var(--medium); } .sev.low { background: var(--low); } .sev.info { background: var(--info); }
+  .finding { background: var(--card); border: 1px solid var(--line); border-left: 5px solid var(--info);
+             border-radius: 6px; padding: 14px 18px; margin: 12px 0; }
+  .finding.critical { border-left-color: var(--critical); } .finding.high { border-left-color: var(--high); }
+  .finding.medium { border-left-color: var(--medium); } .finding.low { border-left-color: var(--low); }
+  .finding h3 { margin: 0 0 6px; font-size: 16px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 8px; word-break: break-all; }
+  .fix { background: #f1f8f2; border-radius: 4px; padding: 8px 12px; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  pre { background: #11151c; color: #e6e9ef; padding: 12px; border-radius: 4px; overflow-x: auto;
+        font: 12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space: pre-wrap; word-break: break-all; }
+  ul.refs { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+  .empty { background: var(--card); border: 1px solid var(--line); padding: 16px; border-radius: 6px; }
+  footer { margin-top: 40px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>WRAITH security assessment</h1>
+  <p class="sub">Web Reconnaissance, Assessment, Inspection &amp; Threat Hunting &middot; v{{ version }}</p>
+
+  <div class="notice">Produced during authorized security testing of the scope below. Contains
+  sensitive information about the target; handle according to the engagement's rules.</div>
+
+  <table>
+    <tr><td class="k">Target</td><td>{{ config.target }}</td></tr>
+    <tr><td class="k">Base URL</td><td>{{ ctx.base_url }}</td></tr>
+    <tr><td class="k">Scope</td><td>{{ config.scope | join(", ") }}</td></tr>
+    <tr><td class="k">Mode</td><td>{{ "safe (non-mutating requests only)" if config.safe_mode else "aggressive" }}</td></tr>
+    <tr><td class="k">Started</td><td>{{ result.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") }} ({{ "%.1f" | format(result.duration_s) }}s)</td></tr>
+    <tr><td class="k">Checks</td><td>{{ result.checks_run | join(", ") }}</td></tr>
+    <tr><td class="k">Requests</td><td>{{ result.requests_sent }} sent, {{ result.blocked_requests }} blocked as out of scope</td></tr>
+    {% if audit_log %}<tr><td class="k">Audit log</td><td>{{ audit_log }}</td></tr>{% endif %}
+  </table>
+
+  <h2>Summary</h2>
+  <div class="counts">
+    {% for severity, n in counts.items() %}
+    <div class="count"><span class="sev {{ severity }}">{{ severity }}</span><b>{{ n }}</b></div>
+    {% endfor %}
+  </div>
+
+  {% if result.failures %}
+  <h2>Incomplete checks</h2>
+  <ul>
+    {% for failure in result.failures %}<li><b>{{ failure.check }}</b>: {{ failure.error }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  <h2>Findings</h2>
+  {% if not result.findings %}
+  <div class="empty">No findings.</div>
+  {% endif %}
+  {% for f in result.findings %}
+  <section class="finding {{ f.severity.value }}" id="f-{{ finding_id(f) }}">
+    <h3><span class="sev {{ f.severity.value }}">{{ f.severity.value }}</span> {{ f.title }}</h3>
+    <div class="meta">{{ f.url }} &middot; confidence: {{ f.confidence.value }} &middot; check: {{ f.check }}{% if f.cvss is not none %} &middot; CVSS {{ f.cvss }}{% endif %}</div>
+    <p>{{ f.description }}</p>
+    <div class="fix"><b>Remediation:</b> {{ f.remediation }}</div>
+    {% if f.references %}
+    <ul class="refs">{% for ref in f.references %}<li>{{ ref }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% for ev in f.evidence %}
+    <details>
+      <summary>Evidence{% if f.evidence | length > 1 %} {{ loop.index }}{% endif %}{% if ev.matched %} &mdash; matched: {{ ev.matched | truncate(80) }}{% endif %}</summary>
+      <pre>{{ ev.request }}</pre>
+      <pre>{{ ev.response_snippet }}</pre>
+    </details>
+    {% endfor %}
+  </section>
+  {% endfor %}
+
+  <h2>Discovery</h2>
+  <table>
+    <tr><td class="k">Pages fetched</td><td>{% for p in ctx.pages %}{{ p.url }} ({{ p.status }})<br>{% endfor %}</td></tr>
+    <tr><td class="k">Forms</td><td>{% for form in ctx.forms %}{{ form.method }} {{ form.action }} [{{ form.parameters | join(", ") }}]<br>{% else %}none{% endfor %}</td></tr>
+    <tr><td class="k">robots.txt paths</td><td>{{ ctx.robots_paths | join(", ") or "none" }}</td></tr>
+    <tr><td class="k">Off-scope links (not requested)</td><td>{% for u in ctx.off_scope_urls %}{{ u }}<br>{% else %}none{% endfor %}</td></tr>
+    <tr><td class="k">State-changing links (not requested)</td><td>{% for u in ctx.unsafe_urls %}{{ u }}<br>{% else %}none{% endfor %}</td></tr>
+  </table>
+
+  <footer>Generated by WRAITH v{{ version }}. Automated results; verify before acting.</footer>
+</main>
+</body>
+</html>

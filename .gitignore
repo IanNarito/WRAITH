@@ -12,4 +12,5 @@ dist/
 htmlcov/
 # scan artifacts
 *.log
-report.*
+/report.*
+/wraith-audit-*.log

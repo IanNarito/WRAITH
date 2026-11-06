@@ -228,6 +228,7 @@ class HTTPClient:
     ) -> Response:
         method = method.upper()
         if self.safe_mode and method not in SAFE_METHODS:
+            logger.warning("safe mode BLOCK %s %s (not sent)", method, url)
             raise UnsafeMethodError(f"{method} is not allowed in safe mode (needs --aggressive)")
         try:
             current = url if isinstance(url, httpx.URL) else httpx.URL(url)
@@ -276,6 +277,9 @@ class HTTPClient:
                     return await self._send_once(method, url, headers, max_bytes)
             except httpx.TransportError as exc:
                 if attempt >= self.max_retries:
+                    logger.info(
+                        "%s %s failed after %d attempt(s): %r", method, url, attempt + 1, exc
+                    )
                     raise HTTPClientError(
                         f"{method} {url} failed: {type(exc).__name__}: {exc}"
                     ) from exc

@@ -96,6 +96,11 @@ class Engine:
                 *(self._run_check(check, ctx, http, semaphore) for check in checks)
             )
             requests_sent = http.requests_sent
+        logger.info(
+            "scan finished: %d request(s) sent, %d blocked out of scope",
+            requests_sent,
+            len(scope.blocked),
+        )
 
         findings: list[Finding] = []
         failures: list[CheckFailure] = []
