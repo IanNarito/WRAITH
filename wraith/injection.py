@@ -24,6 +24,63 @@ _TEXTUAL_FIELD_TYPES = frozenset(
 )
 MAX_POINTS = 60  # bound the request budget per check across the whole scan
 
+# Parameter names that commonly carry a URL or path (used to focus redirect/SSRF/LFI probing).
+URL_PARAM_HINTS = frozenset(
+    {
+        "url",
+        "uri",
+        "link",
+        "redirect",
+        "redirect_url",
+        "redirect_uri",
+        "return",
+        "returnurl",
+        "return_url",
+        "returnto",
+        "return_to",
+        "next",
+        "goto",
+        "go",
+        "dest",
+        "destination",
+        "continue",
+        "target",
+        "to",
+        "out",
+        "view",
+        "page",
+        "r",
+        "u",
+        "callback",
+        "image",
+        "img",
+        "file",
+        "path",
+        "src",
+        "source",
+        "load",
+        "data",
+        "domain",
+        "host",
+        "site",
+        "feed",
+    }
+)
+
+
+def looks_like_url_or_path(value: str) -> bool:
+    v = value.strip().lower()
+    return (
+        v.startswith(("http://", "https://", "//", "/", "www.", "ftp://"))
+        or "://" in v
+        or v.endswith((".php", ".html", ".jsp", ".asp", ".aspx", ".txt", ".xml", ".json"))
+    )
+
+
+def is_urlish_point(point: InjectionPoint) -> bool:
+    """A point worth URL/path probing: its name hints at a URL, or its value looks like one."""
+    return point.param.lower() in URL_PARAM_HINTS or looks_like_url_or_path(point.baseline())
+
 
 @dataclass(frozen=True)
 class InjectionPoint:
@@ -48,14 +105,15 @@ def points_from_context(ctx: ScanContext, *, include_forms: bool = True) -> list
     def add(point: InjectionPoint) -> None:
         points.setdefault(point.identity(), point)
 
-    for page in ctx.pages:
-        split = urlsplit(page.url)
+    query_urls = {p.url for p in ctx.pages} | set(ctx.param_urls)
+    for url in query_urls:
+        split = urlsplit(url)
         if not split.query:
             continue
         params = dict(parse_qsl(split.query, keep_blank_values=True))
         action = urlunsplit((split.scheme, split.netloc, split.path, "", ""))
         for name in params:
-            add(InjectionPoint("GET", action, name, dict(params), "query", page.url))
+            add(InjectionPoint("GET", action, name, dict(params), "query", url))
 
     if include_forms:
         for form in ctx.forms:
@@ -74,11 +132,13 @@ def points_from_context(ctx: ScanContext, *, include_forms: bool = True) -> list
     return list(points.values())
 
 
-async def send_probe(http: HTTPClient, point: InjectionPoint, value: str) -> Response:
+async def send_probe(
+    http: HTTPClient, point: InjectionPoint, value: str, *, follow_redirects: bool = True
+) -> Response:
     """Send ``point`` with its ``param`` set to ``value``; other params keep baseline values."""
     params = {**point.params, point.param: value}
     if point.method == "GET":
         split = urlsplit(point.action)
         url = urlunsplit((split.scheme, split.netloc, split.path, urlencode(params), ""))
-        return await http.get(url)
-    return await http.request("POST", point.action, data=params)
+        return await http.get(url, follow_redirects=follow_redirects)
+    return await http.request("POST", point.action, data=params, follow_redirects=follow_redirects)

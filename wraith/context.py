@@ -83,6 +83,9 @@ class ScanContext:
     tech_hints: tuple[TechHint, ...]
     off_scope_urls: tuple[str, ...]  # discovered but out of scope: recorded, never requested
     unsafe_urls: tuple[str, ...]  # in scope but look state-changing (logout, delete): not requested
+    # In-scope same-origin URLs carrying a query string, even if they redirected or 404'd.
+    # Injection checks test these parameters too, not only successfully-fetched pages.
+    param_urls: tuple[str, ...] = ()
     # Optional CVE correlator (contacts NVD, not the target). None unless --cve is set.
     cve: CveCorrelator | None = None
 

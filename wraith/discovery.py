@@ -97,6 +97,10 @@ async def discover(
     sitemap_urls = await _fetch_sitemaps(http, scope, base.url, robots_sitemaps, off_scope)
     base_html = parse_html(base.url, base.body) if base.is_html else ParsedHtml()
 
+    param_urls: set[str] = set()
+    if urlsplit(base.url).query:
+        param_urls.add(base.url)
+
     def crawlable(url: str) -> bool:
         """Classify a link: record off-scope/unsafe ones, return True if it should be fetched."""
         if not scope.is_in_scope(url):
@@ -107,6 +111,8 @@ async def discover(
         if rules.is_unsafe(url):
             unsafe.add(url)
             return False
+        if urlsplit(url).query:  # a testable parameterized endpoint, kept even if it 404s/redirects
+            param_urls.add(url)
         return True
 
     # Same-origin breadth-first crawl. The base page is depth 0; its links are depth 1, etc.
@@ -170,6 +176,7 @@ async def discover(
         tech_hints=tuple(hints),
         off_scope_urls=tuple(sorted(off_scope)),
         unsafe_urls=tuple(sorted(unsafe)),
+        param_urls=tuple(sorted(param_urls)),
     )
 
 
