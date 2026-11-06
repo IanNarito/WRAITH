@@ -7,53 +7,232 @@ web application vulnerability scanner for authorized penetration testing, built 
 > to test. WRAITH confines itself to the declared scope, refuses to start without an explicit
 > authorization affirmation, and records that affirmation in an audit log.
 
-## Install
+## Installation (Linux)
 
-Requires Python 3.11+ (preinstalled on Kali).
+WRAITH needs **Python 3.11 or newer** (preinstalled on Kali Linux) and runs on any Linux. The
+recommended way to install it is with [`pipx`](https://pypa.github.io/pipx/), which puts the
+`wraith` command on your `PATH` inside its own isolated virtual environment.
+
+### 1. Check your Python version
 
 ```bash
-pipx install .            # from a checkout; puts `wraith` on your PATH
+python3 --version      # must be 3.11 or newer
 ```
 
-Development:
+If it is older than 3.11, install a newer Python (e.g. `sudo apt install python3.11` on
+Debian/Ubuntu, or use `pyenv`).
+
+### 2. Install pipx
+
+**Kali / Debian / Ubuntu:**
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
+sudo apt update
+sudo apt install -y pipx git
+pipx ensurepath
+```
+
+**Fedora:**
+
+```bash
+sudo dnf install -y pipx git
+pipx ensurepath
+```
+
+**Any Linux (via pip):**
+
+```bash
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+```
+
+`pipx ensurepath` adds `~/.local/bin` to your `PATH`. **Open a new terminal** (or run
+`source ~/.bashrc`) afterwards so the `wraith` command is found.
+
+### 3. Get the code and install
+
+```bash
+git clone https://github.com/IanNarito/WRAITH.git
+cd WRAITH
+pipx install .
+```
+
+That's it — `wraith` is now installed globally for your user. (System TLS libraries and
+`openssl`, already present on Kali and most distros, are used by the TLS check.)
+
+### 4. Verify the installation
+
+```bash
+wraith --version
+wraith list-checks        # lists every check and whether it is on by default
+wraith scan --help        # full help for the scan command
+```
+
+### Upgrading and uninstalling
+
+```bash
+cd WRAITH && git pull && pipx install --force .   # upgrade to the latest code
+pipx uninstall wraith                             # remove it
+```
+
+### Development install (for running the tests / hacking on WRAITH)
+
+```bash
+git clone https://github.com/IanNarito/WRAITH.git
+cd WRAITH
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
-pytest && ruff check . && mypy
+pytest            # run the test suite
+ruff check .      # lint
+mypy              # type-check
 ```
+
+Run it from the venv with `python -m wraith scan ...` (or just `wraith ...` while the venv is
+active).
 
 ## Usage
 
-```bash
-wraith scan https://target.example \
-  --scope "target.example,*.target.example" \
-  --confirm-authorized \
-  --rate 5 --concurrency 10 \
-  --format html --output report.html \
-  --proxy http://127.0.0.1:8080 -v
+### The basics
 
-wraith list-checks
+WRAITH has two commands:
+
+```bash
+wraith scan <target> [options]     # run a scan
+wraith list-checks                 # list available checks
 ```
 
-| Flag | Purpose |
-|---|---|
-| `target` | Base URL (`https://` is assumed if no scheme is given) |
-| `--scope` | Comma-separated rules: `host`, `host:port`, `*.glob`, `re:<regex>`. Default: the target host |
-| `--confirm-authorized` | Affirm permission to test. Without it WRAITH asks interactively, or exits when non-interactive |
-| `--rate` / `--concurrency` | Requests per second (default 5) and max parallel requests (default 10) |
-| `--checks` / `--exclude` | Select or drop checks by name |
-| `--format` / `--output` | `terminal` (default), `json`, `html`, `sarif`; file destination (stdout if omitted) |
-| `--proxy` | Route HTTP traffic through Burp/ZAP |
-| `--timeout`, `--user-agent`, `--header`, `--cookie` | Request options (`--header`/`--cookie` repeatable) |
-| `--safe-mode` / `--aggressive` | Safe (default) allows only GET/HEAD/OPTIONS |
-| `--fail-on` | Severity threshold for exit code 1 |
-| `--audit-log` | Audit log path. Default: `./wraith-audit-<UTC timestamp>.log` |
-| `--config` | YAML file of defaults; command-line flags win |
-| `-v` / `-vv` | Show progress / debug output; `-v` also prints evidence in the terminal report |
+A scan always needs a **target** and your **authorization**. The simplest run:
 
-Exit codes: `0` no findings at/above `--fail-on`, `1` findings at/above it, `2` scan error or
-an incomplete scan (a check failed). For example, gate a pipeline with `--fail-on medium`.
+```bash
+wraith scan https://target.example --confirm-authorized
+```
+
+This runs the default (passive + read-only) checks against `https://target.example`, confines
+itself to the `target.example` host, throttles to 5 requests/second, and prints a colored report
+to your terminal. Without `--confirm-authorized` it will ask you to confirm interactively (and
+refuse to run in a script/pipeline until you pass the flag).
+
+> ⚠️ Only scan systems you own or have **explicit written permission** to test.
+
+### A typical engagement
+
+```bash
+# 1. Passive recon first — see what's there, save an HTML report for the client.
+wraith scan https://app.target.example \
+  --scope "app.target.example,*.target.example" \
+  --confirm-authorized \
+  --rate 5 --concurrency 10 \
+  --format html --output recon.html
+
+# 2. Active testing — turn on the injection checks, crawl deeper, chain through Burp,
+#    and correlate detected versions against known CVEs.
+wraith scan https://app.target.example \
+  --scope "app.target.example" \
+  --confirm-authorized \
+  --aggressive \
+  --crawl-depth 2 \
+  --cve \
+  --proxy http://127.0.0.1:8080 \
+  --format html --output full.html \
+  -v
+```
+
+### Safe mode vs. aggressive mode
+
+- **Safe mode (default):** only non-mutating requests (GET/HEAD/OPTIONS). Runs recon plus the
+  passive and read-only checks. Safe to run against production.
+- **Aggressive mode (`--aggressive`):** additionally runs the active injection checks (XSS, SQLi,
+  path traversal, open redirect, SSRF, XXE, CRLF, host-header), which send crafted values into
+  parameters and may POST forms. Still scope-confined, rate-limited, and non-destructive — but
+  use it on systems and in windows where active testing is authorized.
+
+### Flag reference
+
+Run `wraith scan --help` for the authoritative list. Grouped by purpose:
+
+**Target & scope**
+
+| Flag | Default | Description |
+|---|---|---|
+| `target` (positional) | — | Base URL to scan. `https://` is assumed if you omit the scheme. |
+| `--scope <rules>` | the target host | Comma-separated in-scope rules: exact `host`, `host:port`, `*.wildcard.glob`, or `re:<regex>` (matched against the host). Anything outside is blocked and never requested. |
+
+**Authorization & safety**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--confirm-authorized` | off | Affirm you have permission to test. Required for non-interactive runs; otherwise you're prompted. Recorded in the audit log. |
+| `--safe-mode` / `--aggressive` | `--safe-mode` | Safe allows only non-mutating requests. Aggressive enables the active injection checks. |
+| `--rate <n>` | `5` | Maximum requests per second (global token bucket shared by all checks). |
+| `--concurrency <n>` | `10` | Maximum simultaneous requests. |
+| `--timeout <seconds>` | `10` | Per-request timeout. |
+
+**Check selection**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--checks <names>` | all default-on | Comma-separated list of checks to run (overrides the defaults). Names come from `wraith list-checks`. |
+| `--exclude <names>` | — | Comma-separated checks to skip. |
+
+**Crawling**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--crawl-depth <n>` | `1` | Same-origin crawl depth. `1` = links on the target page only; higher values follow links further (GET-only). |
+| `--max-pages <n>` | `30` | Maximum number of pages to crawl. |
+
+**Authentication** (see [Authenticated scanning](#authenticated-scanning))
+
+| Flag | Default | Description |
+|---|---|---|
+| `--login-url <url>` | — | Form-login endpoint; WRAITH logs in and scans with the resulting session. |
+| `--login-data <field=value>` | — | A login form field (repeatable), e.g. `--login-data user=admin --login-data pass=secret`. |
+| `--login-check <text>` | — | Substring expected in the post-login response to confirm success (login failure aborts the scan). |
+
+**CVE correlation** (see [CVE correlation](#cve-correlation---cve))
+
+| Flag | Default | Description |
+|---|---|---|
+| `--cve` / `--no-cve` | `--no-cve` | Look up detected product versions against NVD. Contacts NVD, **not** the target. |
+| `--nvd-api-key <key>` | `$NVD_API_KEY` | Optional NVD API key for a higher lookup rate limit. |
+| `--cve-cache <dir>` | — | Directory to cache NVD results between runs. |
+
+**Request options**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--proxy <url>` | — | Route HTTP traffic through an upstream proxy, e.g. `http://127.0.0.1:8080` for Burp/ZAP. (Raw TLS probes connect directly.) |
+| `--user-agent <string>` | `WRAITH/…` | Override the User-Agent header. |
+| `--header "Name: value"` | — | Add a request header (repeatable). Use for bearer tokens, e.g. `--header "Authorization: Bearer …"`. |
+| `--cookie "name=value"` | — | Add a cookie (repeatable). Use for session-cookie auth. |
+
+**Output & reporting**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--format <fmt>` | `terminal` | `terminal`, `json`, `html`, or `sarif`. |
+| `--output <file>` | stdout | Write the report to a file instead of the terminal. |
+| `--fail-on <severity>` | — | Exit with code `1` if any finding is at or above this severity (`info`/`low`/`medium`/`high`/`critical`). For CI gating. |
+| `-v` / `-vv` | off | `-v` shows progress and prints evidence in the terminal report; `-vv` adds debug logging. |
+
+**Logging & config**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--audit-log <file>` | `./wraith-audit-<UTC>.log` | Where to write the audit log (operator, authorization, every scope decision and request). |
+| `--config <file>` | — | YAML file of defaults (see below). Command-line flags always win. |
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Scan completed; no findings at or above `--fail-on`. |
+| `1` | Scan completed; findings at or above `--fail-on`. |
+| `2` | Scan error, or an incomplete scan (a check failed, bad input, authorization declined). |
+
+Example CI gate: `wraith scan https://app.example --confirm-authorized --fail-on medium`
+fails the pipeline if any medium-or-higher issue is found.
 
 ### Config file
 
