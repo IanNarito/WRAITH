@@ -95,7 +95,9 @@ class Exchange:
 
     def raw_request(self) -> str:
         target = httpx.URL(self.url).raw_path.decode("ascii", "replace")
-        lines = [f"{self.method} {target} {self.http_version}"]
+        # httpx speaks HTTP/1.1 or HTTP/2; a 1.0 server reply doesn't change what we sent.
+        sent_version = "HTTP/2" if self.http_version.startswith("HTTP/2") else "HTTP/1.1"
+        lines = [f"{self.method} {target} {sent_version}"]
         lines += [f"{name}: {value}" for name, value in self.request_headers]
         return "\n".join(lines)
 

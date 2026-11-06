@@ -8,7 +8,12 @@ web application vulnerability scanner for authorized penetration testing, built 
 
 ## Status
 
-v1 in progress. Current step: scaffold (CLI parses arguments; no checks run yet).
+v1 in progress. Working end to end: scope confinement, rate-limited HTTP client (proxy, safe
+mode, evidence capture), discovery (robots.txt, sitemap.xml, same-origin links one level deep,
+forms, tech hints), plugin registry, and the `security_headers` check with terminal output.
+
+Coming next: TLS, exposed files, tech fingerprint, CORS, and cookie checks; JSON/HTML reports;
+audit log.
 
 ## Install
 
@@ -35,5 +40,8 @@ wraith scan https://target.example \
 
 wraith list-checks
 ```
+
+Options can also come from a YAML file (`--config wraith.yaml`); flags on the command line win.
+The target and `--confirm-authorized` are deliberately not accepted from a file.
 
 Exit codes: `0` no findings at/above `--fail-on`, `1` findings at/above it, `2` scan error.

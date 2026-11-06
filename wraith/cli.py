@@ -1,13 +1,19 @@
-"""Typer CLI: parses arguments into a ScanConfig."""
+"""Typer CLI: arguments -> ScanConfig -> authorization gate -> Engine -> report."""
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import sys
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.logging import RichHandler
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from wraith import __version__
 from wraith.config import (
@@ -21,7 +27,10 @@ from wraith.config import (
     build_config,
     load_config_file,
 )
+from wraith.engine import Engine, ScanError
 from wraith.models import Severity
+from wraith.registry import PluginRegistry, RegistryError
+from wraith.reporting import terminal
 
 app = typer.Typer(
     name="wraith",
@@ -30,7 +39,9 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
-console = Console(stderr=True)
+console = Console(stderr=True)  # status, prompts, logs
+out = Console()  # the report itself
+logger = logging.getLogger("wraith")
 
 
 def _version_callback(value: bool) -> None:
@@ -114,14 +125,96 @@ def scan(
         console.print(f"[bold red]error:[/] {exc}")
         raise typer.Exit(code=2) from exc
 
-    # Step 1 stub: show the parsed config. The engine is wired in later steps.
-    _print_config(config)
+    _setup_logging(config.verbosity)
+    if not _authorization_gate(config):
+        raise typer.Exit(code=2)
+    if config.output_format is not OutputFormat.TERMINAL or config.output is not None:
+        console.print(
+            "[yellow]note:[/] json/html/sarif reports and --output are not implemented yet; "
+            "showing terminal output."
+        )
+
+    try:
+        with console.status("Scanning...", spinner="dots"):
+            result = asyncio.run(Engine(config).run())
+    except ScanError as exc:
+        console.print(Text("error: ", style="bold red") + Text(str(exc)))
+        raise typer.Exit(code=2) from exc
+    except KeyboardInterrupt:
+        console.print("[bold red]aborted[/]")
+        raise typer.Exit(code=2) from None
+
+    terminal.render(result, out, verbosity=config.verbosity)
+    raise typer.Exit(code=result.exit_code(config.fail_on))
 
 
 @app.command("list-checks")
 def list_checks() -> None:
     """List available checks and whether each is on by default."""
-    console.print("[yellow]No checks registered yet (plugin registry lands in step 5).[/]")
+    try:
+        checks = PluginRegistry().checks
+    except RegistryError as exc:
+        console.print(Text("error: ", style="bold red") + Text(str(exc)))
+        raise typer.Exit(code=2) from exc
+    table = Table(header_style="bold")
+    table.add_column("Check")
+    table.add_column("Default")
+    table.add_column("Max severity")
+    table.add_column("Description")
+    for name, cls in checks.items():
+        default = "[green]on[/]" if cls.enabled_by_default else "[dim]off[/]"
+        if cls.requires_aggressive:
+            default += " [red](aggressive)[/]"
+        table.add_row(name, default, cls.severity_hint.value, cls.description)
+    out.print(table)
+
+
+def _authorization_gate(config: ScanConfig) -> bool:
+    """Show the declared scope and require an explicit affirmation of permission."""
+    mode = "safe (non-mutating requests only)" if config.safe_mode else "AGGRESSIVE"
+    console.print(
+        Panel(
+            Text.assemble(
+                ("Target: ", "bold"),
+                config.target,
+                "\n",
+                ("Scope:  ", "bold"),
+                ", ".join(config.scope),
+                "\n",
+                ("Mode:   ", "bold"),
+                mode,
+                "\n",
+                ("Rate:   ", "bold"),
+                f"{config.rate:g} req/s, concurrency {config.concurrency}",
+            ),
+            title="WRAITH - declared scope",
+            border_style="red" if not config.safe_mode else "cyan",
+        )
+    )
+    if config.confirm_authorized:
+        logger.info("authorization affirmed via --confirm-authorized for scope %s", config.scope)
+        return True
+    if not sys.stdin.isatty():
+        console.print(
+            "[bold red]error:[/] --confirm-authorized is required when not running interactively."
+        )
+        return False
+    confirmed = typer.confirm(
+        "Do you have explicit permission to test every host in this scope?", default=False
+    )
+    if confirmed:
+        logger.info("authorization affirmed interactively for scope %s", config.scope)
+    else:
+        console.print("Not authorized; nothing was sent.")
+    return confirmed
+
+
+def _setup_logging(verbosity: int) -> None:
+    level = logging.WARNING if verbosity <= 0 else logging.INFO if verbosity == 1 else logging.DEBUG
+    handler = RichHandler(console=console, show_path=False, show_time=verbosity >= 2)
+    logging.basicConfig(level=level, format="%(message)s", handlers=[handler], force=True)
+    for noisy in ("httpx", "httpcore", "hpack", "h2"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def _config_from_cli(ctx: typer.Context, config_file: Path | None) -> ScanConfig:
@@ -134,12 +227,3 @@ def _config_from_cli(ctx: typer.Context, config_file: Path | None) -> ScanConfig
             if source is None or source.name in ("DEFAULT", "DEFAULT_MAP"):
                 values[key] = value
     return build_config(values)
-
-
-def _print_config(config: ScanConfig) -> None:
-    table = Table(title="WRAITH scan config (stub)", show_header=False)
-    table.add_column("key", style="cyan")
-    table.add_column("value")
-    for key, value in vars(config).items():
-        table.add_row(key, repr(value))
-    console.print(table)
