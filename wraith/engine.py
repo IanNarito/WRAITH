@@ -99,7 +99,13 @@ class Engine:
         try:
             async with HTTPClient(config, scope, transport=self._transport) as http:
                 try:
-                    ctx = await discover(config.target, http, scope)
+                    ctx = await discover(
+                        config.target,
+                        http,
+                        scope,
+                        max_pages=config.max_pages,
+                        max_depth=config.crawl_depth,
+                    )
                 except DiscoveryError as exc:
                     raise ScanError(str(exc)) from exc
                 if correlator is not None:

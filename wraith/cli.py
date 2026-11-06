@@ -112,6 +112,13 @@ def scan(
     verbose: Annotated[
         int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity (-v, -vv).")
     ] = 0,
+    crawl_depth: Annotated[
+        int,
+        typer.Option(
+            min=1, help="Same-origin crawl depth. 1 = links on the target page only (GET-only)."
+        ),
+    ] = 1,
+    max_pages: Annotated[int, typer.Option(min=1, help="Maximum pages to crawl.")] = 30,
     cve: Annotated[
         bool,
         typer.Option(

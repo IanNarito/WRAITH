@@ -8,6 +8,7 @@ import asyncio
 import html
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
@@ -74,6 +75,7 @@ async def discover(
     scope: ScopeManager,
     *,
     max_pages: int = DEFAULT_MAX_PAGES,
+    max_depth: int = 1,
 ) -> ScanContext:
     rules = load_rules()
     try:
@@ -95,20 +97,41 @@ async def discover(
     sitemap_urls = await _fetch_sitemaps(http, scope, base.url, robots_sitemaps, off_scope)
     base_html = parse_html(base.url, base.body) if base.is_html else ParsedHtml()
 
-    candidates: dict[str, None] = {}
-    for url in [*base_html.links, *sitemap_urls]:
+    def crawlable(url: str) -> bool:
+        """Classify a link: record off-scope/unsafe ones, return True if it should be fetched."""
         if not scope.is_in_scope(url):
             off_scope.add(url)
-        elif _origin(url) != origin or url == base.url or rules.is_static(url):
-            continue
-        elif rules.is_unsafe(url):
+            return False
+        if _origin(url) != origin or rules.is_static(url):
+            return False
+        if rules.is_unsafe(url):
             unsafe.add(url)
-        else:
-            candidates[url] = None
-    if len(candidates) > max_pages:
-        logger.info("discovery: %d candidate pages, fetching first %d", len(candidates), max_pages)
-    fetched = await asyncio.gather(*(_fetch_page(http, u) for u in list(candidates)[:max_pages]))
-    pages = [base, *(p for p in fetched if p is not None)]
+            return False
+        return True
+
+    # Same-origin breadth-first crawl. The base page is depth 0; its links are depth 1, etc.
+    # Every hop is still a GET through the scope-checked, rate-limited client.
+    seen: set[str] = {base.url}
+    fetched_pages: list[Page] = []
+    level: list[str] = _new_links([*base_html.links, *sitemap_urls], seen, crawlable)
+    depth = 1
+    while level and len(fetched_pages) < max_pages:
+        batch = level[: max_pages - len(fetched_pages)]
+        results = await asyncio.gather(*(_fetch_page(http, u) for u in batch))
+        next_level: list[str] = []
+        for page in results:
+            if page is None:
+                continue
+            fetched_pages.append(page)
+            if depth < max_depth:
+                next_level += _new_links(_parse_if_html(page).links, seen, crawlable)
+        level = next_level
+        depth += 1
+    if level:
+        logger.info(
+            "discovery: page budget %d reached; %d link(s) not crawled", max_pages, len(level)
+        )
+    pages = [base, *fetched_pages]
 
     forms: dict[tuple[str, str, tuple[str, ...]], Form] = {}
     scripts: dict[str, None] = {}
@@ -148,6 +171,18 @@ async def discover(
         off_scope_urls=tuple(sorted(off_scope)),
         unsafe_urls=tuple(sorted(unsafe)),
     )
+
+
+def _new_links(links: list[str], seen: set[str], crawlable: Callable[[str], bool]) -> list[str]:
+    """First-seen links that should be crawled; updates ``seen`` with everything considered."""
+    out: list[str] = []
+    for url in links:
+        if url in seen:
+            continue
+        seen.add(url)
+        if crawlable(url):
+            out.append(url)
+    return out
 
 
 def to_page(response: Response) -> Page:

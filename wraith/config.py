@@ -53,6 +53,8 @@ class ScanConfig:
     cve: bool = False  # correlate detected versions against NVD (contacts NVD, not the target)
     nvd_api_key: str | None = None
     cve_cache: Path | None = None
+    crawl_depth: int = 1  # same-origin BFS depth: 1 = links on the target page only
+    max_pages: int = 30
 
 
 # Config-file key -> CLI parameter name.
@@ -74,6 +76,8 @@ FILE_KEYS: dict[str, str] = {
     "verbose": "verbose",
     "cve": "cve",
     "cve_cache": "cve_cache",
+    "crawl_depth": "crawl_depth",
+    "max_pages": "max_pages",
 }
 FORBIDDEN_FILE_KEYS: dict[str, str] = {
     "target": "pass the target on the command line",
@@ -152,6 +156,8 @@ def build_config(values: Mapping[str, Any]) -> ScanConfig:
         cve=_bool(values.get("cve", False), "cve"),
         nvd_api_key=str(api_key) if api_key is not None else None,
         cve_cache=Path(cve_cache) if cve_cache is not None else None,
+        crawl_depth=int(_number(values.get("crawl_depth", 1), "crawl_depth", minimum=1)),
+        max_pages=int(_number(values.get("max_pages", 30), "max_pages", minimum=1)),
     )
 
 

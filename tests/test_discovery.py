@@ -123,3 +123,40 @@ def test_parse_sitemap_index_and_entities() -> None:
 def _path_query(url: str) -> str:
     parts = urlsplit(url)
     return parts.path + (f"?{parts.query}" if parts.query else "")
+
+
+async def test_crawl_depth_bfs(httpserver: HTTPServer, make_config: ConfigFactory) -> None:
+    html = {"content_type": "text/html"}
+    httpserver.expect_request("/").respond_with_data("<a href='/a'>a</a>", **html)
+    httpserver.expect_request("/a").respond_with_data("<a href='/b'>b</a>", **html)
+    httpserver.expect_request("/b").respond_with_data("<a href='/c'>c</a>", **html)
+    httpserver.expect_request("/c").respond_with_data("<html>leaf</html>", **html)
+    httpserver.expect_request("/robots.txt").respond_with_data("", content_type="text/plain")
+    httpserver.expect_request("/sitemap.xml").respond_with_data("", status=404)
+
+    config = make_config()
+    scope = ScopeManager(config.scope)
+
+    async with HTTPClient(config, scope) as http:
+        depth1 = await discover(config.target, http, scope, max_depth=1)
+    assert sorted(urlsplit(p.url).path for p in depth1.pages) == ["/", "/a"]
+
+    async with HTTPClient(config, scope) as http:
+        depth3 = await discover(config.target, http, scope, max_depth=3)
+    assert sorted(urlsplit(p.url).path for p in depth3.pages) == ["/", "/a", "/b", "/c"]
+
+
+async def test_crawl_respects_max_pages(httpserver: HTTPServer, make_config: ConfigFactory) -> None:
+    html = {"content_type": "text/html"}
+    links = "".join(f"<a href='/p{i}'>{i}</a>" for i in range(10))
+    httpserver.expect_request("/").respond_with_data(links, **html)
+    for i in range(10):
+        httpserver.expect_request(f"/p{i}").respond_with_data("<html>leaf</html>", **html)
+    httpserver.expect_request("/robots.txt").respond_with_data("", content_type="text/plain")
+    httpserver.expect_request("/sitemap.xml").respond_with_data("", status=404)
+
+    config = make_config()
+    scope = ScopeManager(config.scope)
+    async with HTTPClient(config, scope) as http:
+        ctx = await discover(config.target, http, scope, max_pages=3, max_depth=2)
+    assert len(ctx.pages) == 4  # base + 3 crawled
