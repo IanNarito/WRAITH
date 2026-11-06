@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlparse
 
 import typer
 from rich.console import Console
@@ -19,10 +18,8 @@ from wraith.config import (
     ConfigError,
     OutputFormat,
     ScanConfig,
-    normalize_target,
-    parse_cookies,
-    parse_headers,
-    split_csv,
+    build_config,
+    load_config_file,
 )
 from wraith.models import Severity
 
@@ -54,6 +51,7 @@ def main(
 
 @app.command()
 def scan(
+    ctx: typer.Context,
     target: Annotated[str, typer.Argument(help="Base URL of the in-scope target.")],
     scope: Annotated[
         str | None,
@@ -102,30 +100,16 @@ def scan(
     verbose: Annotated[
         int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity (-v, -vv).")
     ] = 0,
+    config_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--config", exists=True, dir_okay=False, help="YAML file of defaults; CLI flags win."
+        ),
+    ] = None,
 ) -> None:
     """Scan a target for web vulnerabilities."""
     try:
-        normalized = normalize_target(target)
-        scope_rules = split_csv(scope) or (urlparse(normalized).hostname or "",)
-        config = ScanConfig(
-            target=normalized,
-            scope=scope_rules,
-            confirm_authorized=confirm_authorized,
-            rate=rate,
-            concurrency=concurrency,
-            checks=split_csv(checks),
-            exclude=split_csv(exclude),
-            output_format=output_format,
-            output=output,
-            proxy=proxy,
-            timeout=timeout,
-            user_agent=user_agent,
-            headers=parse_headers(header or []),
-            cookies=parse_cookies(cookie or []),
-            safe_mode=safe_mode,
-            fail_on=fail_on,
-            verbosity=verbose,
-        )
+        config = _config_from_cli(ctx, config_file)
     except ConfigError as exc:
         console.print(f"[bold red]error:[/] {exc}")
         raise typer.Exit(code=2) from exc
@@ -138,6 +122,18 @@ def scan(
 def list_checks() -> None:
     """List available checks and whether each is on by default."""
     console.print("[yellow]No checks registered yet (plugin registry lands in step 5).[/]")
+
+
+def _config_from_cli(ctx: typer.Context, config_file: Path | None) -> ScanConfig:
+    """Merge CLI params with an optional YAML file; explicitly passed flags take precedence."""
+    values = dict(ctx.params)
+    values.pop("config_file", None)
+    if config_file is not None:
+        for key, value in load_config_file(config_file).items():
+            source = ctx.get_parameter_source(key)
+            if source is None or source.name in ("DEFAULT", "DEFAULT_MAP"):
+                values[key] = value
+    return build_config(values)
 
 
 def _print_config(config: ScanConfig) -> None:
