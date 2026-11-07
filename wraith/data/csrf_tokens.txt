@@ -1,0 +1,17 @@
+# Field-name patterns (case-insensitive regex) that indicate an anti-CSRF token on a form.
+# A POST form carrying a field whose name matches one of these is treated as CSRF-protected.
+# Lines starting with # are comments.
+csrf
+xsrf
+_token\b
+authenticity_token
+csrfmiddlewaretoken
+__requestverificationtoken
+request_?token
+form_?token
+security_?token
+anti_?forgery
+nonce
+user_token
+_wpnonce
+synchronizer_?token

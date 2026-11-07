@@ -1,0 +1,21 @@
+# LDAP error signatures, one regex per line (case-insensitive). A match that appears after a
+# filter-breaking probe but not in the baseline indicates the input reaches an LDAP filter.
+# Lines starting with # are comments.
+javax\.naming\.directory
+javax\.naming\.NameNotFoundException
+com\.sun\.jndi\.ldap
+LDAP: error code \d+
+LDAPException
+ldap_search
+ldap_bind
+ldap_(?:err2string|errno)
+Bad search filter
+Invalid DN syntax
+Protocol error
+supplied argument is not a valid ldap
+AcceptSecurityContext error
+DSID-[0-9A-F]+
+System\.DirectoryServices
+IllegalArgumentException: invalid attribute
+Filter Error
+Search: Bad search filter

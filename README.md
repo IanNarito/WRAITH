@@ -143,9 +143,10 @@ wraith scan https://app.target.example \
 - **Safe mode (default):** only non-mutating requests (GET/HEAD/OPTIONS). Runs recon plus the
   passive and read-only checks. Safe to run against production.
 - **Aggressive mode (`--aggressive`):** additionally runs the active injection checks (XSS, SQLi,
-  path traversal, open redirect, SSRF, XXE, CRLF, host-header), which send crafted values into
-  parameters and may POST forms. Still scope-confined, rate-limited, and non-destructive — but
-  use it on systems and in windows where active testing is authorized.
+  command injection, SSTI, LDAP injection, path traversal, open redirect, SSRF, XXE, CRLF,
+  host-header), which send crafted values into parameters and may POST forms. Still scope-confined,
+  rate-limited, and non-destructive — but use it on systems and in windows where active testing is
+  authorized.
 
 ### Flag reference
 
@@ -260,6 +261,7 @@ The target and `--confirm-authorized` are deliberately not accepted from a file.
 | `tech_fingerprint` | Server, framework, CMS, JS libraries and exposed versions (`data/tech_signatures.yaml`) | Version findings are informational, with an NVD link for CVE cross-checking |
 | `cors` | Arbitrary origin reflection, `null` origin, prefix/suffix allowlist bypasses, `*` with credentials | Exact match of the probe origin in `Access-Control-Allow-Origin` |
 | `cookies` | Session cookies missing `Secure`, `HttpOnly`, `SameSite` (or `SameSite=None`) | Only session-like cookies (`data/session_cookies.txt`); CSRF tokens and deletions skipped |
+| `csrf` | State-changing (POST) forms with no anti-CSRF token | Passive form inspection only; a form with a known token field name (`data/csrf_tokens.txt`) or a random hidden token is treated as protected; MEDIUM/PROBABLE |
 
 ### Aggressive checks (require `--aggressive`)
 
@@ -272,12 +274,16 @@ time delays). Findings are `probable` — confirm manually.
 | `xss_reflected` | Reflected cross-site scripting | Unique marker reflected unencoded into HTML; non-executing tag, not a live script |
 | `xss_stored` | Stored/persistent XSS | Submits a non-executing marker to each form once, re-checks pages for unencoded persistence |
 | `sqli` | SQL injection | Error-based, strict boolean-differential, and tightly-bounded time-based blind (one sleeping request confirmed by a fast control) |
+| `command_injection` | OS command injection | Echo-marker differential (token returned without the literal `echo` text = execution, CONFIRMED), plus budgeted time-based blind confirmed by a fast control |
+| `ssti` | Server-side template injection | Injects `a*b` in each engine's delimiters (`{{ }}`, `${ }`, `#{ }`, `<%= %>`, …); flags only when the product renders and the literal expression does not (CONFIRMED) |
+| `ldap_injection` | LDAP injection | Error-based: filter-breaking values that surface a new LDAP error signature (`data/ldap_errors.txt`) absent from the baseline; PROBABLE |
 | `path_traversal` | Path traversal / LFI | Reads `/etc/passwd` or `win.ini` (harmless marker files), confirmed by content signature |
 | `open_redirect` | Unvalidated redirects | Injects a reserved-domain marker; flags redirects to it (never followed) |
 | `ssrf` | Server-side request forgery | Conservative in-band only: an unresolvable `*.invalid` marker + a fetch-error differential (no third party ever contacted, no OOB) |
 | `xxe` | XML external entity | Internal-entity expansion only (no external entities / DTD fetch / DoS); MEDIUM/PROBABLE |
 | `crlf_injection` | HTTP response splitting | Injects CR-LF + marker header; confirmed if emitted as a real response header |
 | `host_header_injection` | Host-header poisoning | Spoofs Host/X-Forwarded-Host; flags reflection into body/Location |
+| `idor` | Enumerable object references / IDOR candidates (off by default) | Numeric id-like params only: a neighbour id returns a same-shaped but different record while an out-of-range id clearly differs; PROBABLE — confirm with a second account |
 | `content_discovery` | Unlinked paths (off by default) | Small wordlist brute force, GET-only, soft-404 calibration, request budget |
 | `param_mining` | Hidden parameters (off by default) | Many candidate names per request; flags reflected unknown parameters |
 
